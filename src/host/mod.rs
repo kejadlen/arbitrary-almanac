@@ -29,7 +29,7 @@ use serde_json::Value as Data;
 /// A workflow that has been read and checked, but not run.
 #[derive(Debug)]
 pub struct Workflow {
-    name: String,
+    source: Source,
     declaration: Declaration,
     capabilities: Capabilities,
     lua: String,
@@ -56,7 +56,7 @@ impl Workflow {
         let capabilities = capabilities::read(catalog, &declaration, &source, &forms)?;
         let lua = compile::compile(&fennel, &source, &forms)?;
         Ok(Self {
-            name: name.to_string(),
+            source,
             declaration,
             capabilities,
             lua,
@@ -71,8 +71,8 @@ impl Workflow {
         let sandbox = Sandbox::new()?;
         // The module's own locals run here too, so their failures are the run's.
         let exports = sandbox
-            .exports(&self.name, &self.lua)
-            .map_err(gather::failed)?;
+            .exports(self.source.name(), &self.lua)
+            .map_err(|error| gather::failed(&self.source, error))?;
         let capabilities = &self.capabilities;
         let granted: Vec<&str> = capabilities
             .providers
@@ -80,7 +80,7 @@ impl Workflow {
             .chain(&capabilities.agents)
             .map(String::as_str)
             .collect();
-        gather::run(&sandbox, &exports, &granted, event, dispatch).await
+        gather::run(&sandbox, &self.source, &exports, &granted, event, dispatch).await
     }
 
     pub fn declaration(&self) -> &Declaration {

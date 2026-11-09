@@ -12,6 +12,7 @@ use std::sync::Arc;
 const FENNEL: &str = include_str!("../../vendor/fennel.lua");
 
 /// A workflow's text and the name its errors carry.
+#[derive(Debug)]
 pub struct Source {
     name: String,
     text: String,
@@ -28,25 +29,46 @@ impl Source {
         }
     }
 
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn named(&self) -> Arc<NamedSource<String>> {
         Arc::clone(&self.named)
     }
 
-    /// The first line of a Fennel error, and where in this source it points.
-    fn located(&self, error: &mlua::Error) -> (String, Option<SourceSpan>) {
-        let message = error.to_string();
-        let message = message.strip_prefix("runtime error: ").unwrap_or(&message);
-        let first = message.lines().next().unwrap_or_default().to_string();
-        let at = self.offset_of(&first);
-        (first, at)
+    /// The first line of a Fennel or Lua error, and where in this source it points.
+    ///
+    /// Fennel and Lua's `error` start the message with its position. An error raised from Rust
+    /// has none of its own, so it takes the traceback's first frame in this source.
+    pub(super) fn located(&self, error: &mlua::Error) -> (String, Option<SourceSpan>) {
+        let message = match root(error) {
+            mlua::Error::RuntimeError(message) => message.clone(),
+            other => other.to_string(),
+        };
+        let first = message.lines().next().unwrap_or_default();
+        if let Some((_, at)) = self.position(first) {
+            return (first.to_string(), Some(at));
+        }
+        let frames = match error {
+            mlua::Error::CallbackError { traceback, .. } => traceback.lines(),
+            _ => "".lines(),
+        };
+        let frame = frames
+            .map(str::trim_start)
+            .find_map(|frame| self.position(frame).map(|(len, at)| (&frame[..len], at)));
+        match frame {
+            Some((position, at)) => (format!("{position} {first}"), Some(at)),
+            None => (first.to_string(), None),
+        }
     }
 
-    /// Where a Fennel error message such as `w.fnl:3:7: Parse error: ...` points.
-    pub(super) fn offset_of(&self, message: &str) -> Option<SourceSpan> {
-        let rest = message.strip_prefix(&self.name)?.strip_prefix(':')?;
-        let mut parts = rest.splitn(3, ':');
-        let line: usize = parts.next()?.parse().ok()?;
-        let col: usize = parts.next()?.parse().ok()?;
+    /// A position such as `w.fnl:3:7:` or `w.fnl:3:` at the start of `text`: how long it is, and
+    /// where in this source it points. Lua's own errors have no column.
+    fn position(&self, text: &str) -> Option<(usize, SourceSpan)> {
+        let rest = text.strip_prefix(&self.name)?.strip_prefix(':')?;
+        let (line, rest) = number(rest)?;
+        let (col, rest) = number(rest).unwrap_or((0, rest));
         let start: usize = self
             .text
             .split_inclusive('\n')
@@ -54,8 +76,25 @@ impl Source {
             .map(str::len)
             .sum();
         let offset = start.saturating_add(col).min(self.text.len());
-        Some(SourceSpan::from((offset, 0)))
+        Some((
+            text.len().saturating_sub(rest.len()),
+            SourceSpan::from((offset, 0)),
+        ))
     }
+}
+
+/// The error under any callback wrapping, which is the one that says what went wrong.
+fn root(error: &mlua::Error) -> &mlua::Error {
+    match error {
+        mlua::Error::CallbackError { cause, .. } => root(cause),
+        other => other,
+    }
+}
+
+/// A number and a colon at the start of `text`, such as the `3:` of `3:7: Parse error`.
+fn number(text: &str) -> Option<(usize, &str)> {
+    let (digits, rest) = text.split_once(':')?;
+    Some((digits.parse().ok()?, rest))
 }
 
 /// A VM with the Fennel module in its registry, where [`Form`]'s conversion also finds it.

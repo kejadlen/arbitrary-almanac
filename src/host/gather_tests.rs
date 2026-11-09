@@ -50,11 +50,15 @@ fn load(source: &str) -> Result<Workflow, Error> {
     Workflow::load(&super::testing::catalog(), "w.fnl", source)
 }
 
-async fn gather(body: &str, dispatch: &mut Fake) -> Result<Data, Error> {
-    let source = gathering(&format!(
+/// A workflow whose gather, handed `github` and `fixer`, is `body` on its fourth line.
+fn with_body(body: &str) -> String {
+    gathering(&format!(
         "(fn gather [{{: github : fixer}} event]\n  {body})"
-    ));
-    load(&source)?
+    ))
+}
+
+async fn gather(body: &str, dispatch: &mut Fake) -> Result<Data, Error> {
+    load(&with_body(body))?
         .gather(&json!({"repo": "o/r"}), dispatch)
         .await
 }
@@ -277,6 +281,53 @@ async fn failures_inside_gather_end_the_run() {
             .unwrap_err();
         assert_eq!(code(&err), "arbitrary_almanac::run", "{body}");
         assert!(err.to_string().starts_with(message), "{body}: {err}");
+    }
+}
+
+/// Where an error's label starts, if it has one.
+fn label(err: &Error) -> Option<usize> {
+    Some(err.labels()?.next()?.offset())
+}
+
+/// The first column of the line `with_body` puts the body on.
+fn body_line() -> usize {
+    with_body("")
+        .lines()
+        .take(3)
+        .map(|line| line.len() + 1)
+        .sum()
+}
+
+#[tokio::test]
+async fn a_run_error_points_at_its_line() {
+    let cases: [(&str, Answer, &str); 2] = [
+        ("(error \"boom\")", nothing, "gather failed: w.fnl:4: boom"),
+        (
+            "(string.format \"%s\" (. (github.pull) :title))",
+            hostile,
+            "gather failed: w.fnl:4: untrusted text cannot become a string",
+        ),
+    ];
+    for (body, answer, message) in cases {
+        let err = gather(body, &mut Fake::answering(answer))
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), message, "{body}");
+        assert_eq!(label(&err), Some(body_line()), "{body}");
+    }
+}
+
+#[tokio::test]
+async fn a_run_error_from_outside_the_script_has_no_line() {
+    let cases: [(&str, Answer); 2] = [
+        ("(while true nil)", nothing),
+        ("(github.pull)", |_| Err("GitHub is down".into())),
+    ];
+    for (body, answer) in cases {
+        let err = gather(body, &mut Fake::answering(answer))
+            .await
+            .unwrap_err();
+        assert_eq!(label(&err), None, "{body}: {err}");
     }
 }
 

@@ -5,6 +5,7 @@
 //! performs it through a [`Dispatch`] and resumes the script with the answer. The script never
 //! holds a client, a socket, or the run's context, only what Rust hands back.
 
+use super::fennel::Source;
 use super::sandbox::Sandbox;
 use super::taint;
 use crate::Error;
@@ -47,6 +48,7 @@ impl UserData for Capability {
 
 pub async fn run(
     sandbox: &Sandbox,
+    source: &Source,
     exports: &Table,
     granted: &[&str],
     event: &Data,
@@ -59,6 +61,7 @@ pub async fn run(
         capabilities.set(*name, Capability(name.to_string()))?;
     }
     let mut input = (capabilities, taint::into_lua(lua, event)?).into_lua_multi(lua)?;
+    let failed = |error| failed(source, error);
     loop {
         let output: MultiValue = thread.resume(input).map_err(failed)?;
         if thread.status() != ThreadStatus::Resumable {
@@ -81,16 +84,19 @@ pub async fn run(
         let answer = dispatch.call(call).await.map_err(|message| Error::Run {
             function: "gather",
             message,
+            src: source.named(),
+            at: None,
         })?;
         input = taint::into_lua(lua, &answer)?.into_lua_multi(lua)?;
     }
 }
 
-pub fn failed(error: mlua::Error) -> Error {
-    let message = error.to_string();
-    let message = message.strip_prefix("runtime error: ").unwrap_or(&message);
+pub fn failed(source: &Source, error: mlua::Error) -> Error {
+    let (message, at) = source.located(&error);
     Error::Run {
         function: "gather",
-        message: message.lines().next().unwrap_or_default().to_string(),
+        message,
+        src: source.named(),
+        at,
     }
 }

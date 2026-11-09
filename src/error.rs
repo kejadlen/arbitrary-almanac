@@ -70,6 +70,10 @@ pub enum Error {
     Run {
         function: &'static str,
         message: String,
+        #[source_code]
+        src: Arc<NamedSource<String>>,
+        #[label("here")]
+        at: Option<SourceSpan>,
     },
 
     #[error("a workflow must end with {{: declare : gather : policy}}")]
