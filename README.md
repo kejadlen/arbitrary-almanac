@@ -111,6 +111,7 @@ src/
   bundle.rs         the trailer: write at build, read at startup
   bin/arbitrary-almanac/
     main.rs         almanac::main_with, plus the build verb
+vendor/fennel.lua   the Fennel 1.6.1 compiler (MIT), built into the binary
 prompts/            agent prompts, built into the binary
 workflows/          .fnl workflows, bundled per deployment
 ```

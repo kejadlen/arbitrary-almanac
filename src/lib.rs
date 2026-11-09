@@ -10,5 +10,6 @@
 )]
 
 mod error;
+pub mod host;
 
 pub use error::Error;
