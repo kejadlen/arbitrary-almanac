@@ -6,6 +6,7 @@
 //! holds a client, a socket, or the run's context, only what Rust hands back.
 
 use super::sandbox::Sandbox;
+use super::taint;
 use crate::Error;
 use mlua::prelude::LuaThreadStatus as ThreadStatus;
 use mlua::{
@@ -57,7 +58,7 @@ pub async fn run(
     for name in granted {
         capabilities.set(*name, Capability(name.to_string()))?;
     }
-    let mut input = (capabilities, lua.to_value(event)?).into_lua_multi(lua)?;
+    let mut input = (capabilities, taint::into_lua(lua, event)?).into_lua_multi(lua)?;
     loop {
         let output: MultiValue = thread.resume(input).map_err(failed)?;
         if thread.status() != ThreadStatus::Resumable {
@@ -81,7 +82,7 @@ pub async fn run(
             function: "gather",
             message,
         })?;
-        input = lua.to_value(&answer)?.into_lua_multi(lua)?;
+        input = taint::into_lua(lua, &answer)?.into_lua_multi(lua)?;
     }
 }
 

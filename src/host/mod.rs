@@ -11,6 +11,7 @@ mod fennel;
 mod form;
 mod gather;
 mod sandbox;
+mod taint;
 
 pub use capabilities::Capabilities;
 pub use declaration::{Agent, Declaration};
