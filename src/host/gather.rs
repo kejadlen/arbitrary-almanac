@@ -55,7 +55,7 @@ pub async fn run(
     dispatch: &mut impl Dispatch,
 ) -> Result<Data, Error> {
     let lua = sandbox.lua();
-    let failed = |error| failed(source, error);
+    let failed = |error| failed("gather", source, error);
     let thread = sandbox.thread(exports.get("gather").map_err(failed)?)?;
     let mut input = handed(lua, granted, event).map_err(Error::Lua)?;
     loop {
@@ -98,11 +98,11 @@ fn handed(lua: &Lua, granted: &[&str], event: &Data) -> mlua::Result<MultiValue>
     (capabilities, taint::into_lua(lua, event)?).into_lua_multi(lua)
 }
 
-/// The workflow failed, as opposed to the host, whose failures are [`Error::Lua`].
-pub fn failed(source: &Source, error: mlua::Error) -> Error {
+/// `function` failed, as opposed to the host, whose failures are [`Error::Lua`].
+pub fn failed(function: &'static str, source: &Source, error: mlua::Error) -> Error {
     let (message, at) = source.located(&error);
     Error::Run {
-        function: "gather",
+        function,
         message,
         src: source.named(),
         at,

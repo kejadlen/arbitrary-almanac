@@ -1,6 +1,6 @@
 use super::testing::{Ages, catalog};
 use super::*;
-use almanac::effect::EffectKind;
+use almanac::effect::{EffectKind, Planned};
 use almanac::prelude::{Providers, Slug};
 use almanac::runtime::{Envelope, Origin, Outcome, Runtime};
 use almanac::store::MemoryStore;
@@ -48,16 +48,30 @@ async fn run(runtime: &Runtime, kind: &str, payload: Data) -> Vec<Outcome> {
     runtime.drain().await.unwrap()
 }
 
-/// The run id of the one run in `outcomes`, if it ran and decided nothing.
-fn ran_quietly(outcomes: &[Outcome]) -> Option<String> {
+/// The run id and effects of the one run in `outcomes`, if it ran, with each effect as Almanac
+/// stores it.
+fn ran(outcomes: &[Outcome]) -> Option<(String, Vec<Data>)> {
     match outcomes {
         [
             Outcome::Ran {
                 run_id, effects, ..
             },
-        ] if effects.is_empty() => Some(run_id.clone()),
+        ] => Some((
+            run_id.clone(),
+            effects
+                .iter()
+                .map(|effect| serde_json::to_value(Planned::from(effect)).unwrap_or_default())
+                .collect(),
+        )),
         _ => None,
     }
+}
+
+/// The run id of the one run in `outcomes`, if it ran and decided nothing.
+fn ran_quietly(outcomes: &[Outcome]) -> Option<String> {
+    ran(outcomes)
+        .filter(|(_, effects)| effects.is_empty())
+        .map(|(run_id, _)| run_id)
 }
 
 #[tokio::test]
@@ -189,4 +203,34 @@ async fn a_workflow_runs_only_on_its_event() {
     let runtime = runtime(workflow, Providers::new());
     let outcomes = run(&runtime, "github.check_suite.completed", suite(None)).await;
     assert!(outcomes.is_empty(), "{outcomes:?}");
+}
+
+#[tokio::test]
+async fn a_run_decides_its_effects_and_a_replay_decides_them_again() {
+    let source = r#"(local declare {:name :red :on :github.check_suite.completed :intent "Look"
+                 :may [:attest :await :file :ask] :runs-per-hour 10})
+(fn gather [{} event] {:repo event.repo :sha event.head_sha})
+(fn policy [facts {: attest : await : file : ask}]
+  [(attest {:context "almanac/red" :state :failure :repo facts.repo :sha facts.sha})
+   (await "checks")
+   (file {:title (.. "Red in " facts.repo) :target facts.repo :body "b"})
+   (ask {:question "Fix?" :target facts.repo :body "b"})])
+{: declare : gather : policy}"#;
+    let workflow = Registration::new(Workflow::load(&catalog(), "red.fnl", source).unwrap());
+    let runtime = runtime(workflow, Providers::new());
+    let sha = "a".repeat(40);
+    let expected = vec![
+        json!({"Attest": {"context": "almanac/red", "state": "Failure", "repo": "o/r", "sha": sha}}),
+        json!({"Await": {"until": "checks"}}),
+        json!({"File": {"title": "Red in o/r", "target": "o/r", "body": {"$untrusted": "b"}}}),
+        json!({"Ask": {"question": "Fix?", "target": "o/r", "pull": null,
+                       "body": {"$untrusted": "b"}}}),
+    ];
+
+    let outcomes = run(&runtime, "github.check_suite.completed", suite(None)).await;
+    let (run_id, first) = ran(&outcomes).unwrap_or_default();
+    assert_eq!(first, expected, "{outcomes:?}");
+
+    let replayed = runtime.replay(&run_id).await.unwrap();
+    assert_eq!(ran(&[replayed]), Some((run_id, expected)));
 }

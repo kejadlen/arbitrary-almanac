@@ -32,10 +32,15 @@ pub struct Agent {
 /// An effect as a workflow names it, `:attest` for Almanac's `Attest`, read by `EffectKind`'s own
 /// `Deserialize` so the set stays Almanac's.
 pub fn effect_kind(name: &str) -> Option<EffectKind> {
+    variant(name)
+}
+
+/// One of Almanac's unit variants as a workflow names it: `:failure` for `Failure`.
+pub fn variant<T: for<'de> Deserialize<'de>>(name: &str) -> Option<T> {
     let mut chars = name.chars();
     let first = chars.next().filter(char::is_ascii_lowercase)?;
     let capitalized = first.to_ascii_uppercase().to_string() + chars.as_str();
-    EffectKind::deserialize(StrDeserializer::<value::Error>::new(&capitalized)).ok()
+    T::deserialize(StrDeserializer::<value::Error>::new(&capitalized)).ok()
 }
 
 fn effect_kinds<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<EffectKind>, D::Error> {

@@ -31,6 +31,21 @@ impl Form {
         }
     }
 
+    /// Every string literal in this form and the forms inside it.
+    pub fn strings(&self) -> Vec<&str> {
+        match self {
+            Self::Str(text) => vec![text],
+            Self::List(forms, _) | Self::Sequence(forms, _) => {
+                forms.iter().flat_map(Form::strings).collect()
+            }
+            Self::Table(entries, _) => entries
+                .iter()
+                .flat_map(|(key, value)| key.strings().into_iter().chain(value.strings()))
+                .collect(),
+            _ => vec![],
+        }
+    }
+
     pub fn symbol(&self) -> Option<&str> {
         match self {
             Form::Symbol(name, _) => Some(name),

@@ -6,14 +6,17 @@
 
 use super::Workflow;
 use super::gather::{Call, Dispatch};
+use super::policy::Decision;
 use crate::catalog::Read;
 use almanac::cx::{Cx, Halt, StepError};
-use almanac::effect::EffectKind;
+use almanac::effect::{Effect, EffectKind};
 use almanac::providers::Requirement;
+use almanac::taint::Title;
 use almanac::wire::Malformed;
 use almanac::workflow::{Decided, Found, Identity, Registered, Scanner};
 use futures::future::BoxFuture;
 use serde_json::{Value as Data, json};
+use std::collections::BTreeMap;
 use std::future::Future;
 
 /// A loaded workflow with the names the runtime keeps for as long as the binary runs.
@@ -23,6 +26,8 @@ pub struct Registration {
     intent: &'static str,
     may: &'static [EffectKind],
     agents: Vec<&'static str>,
+    /// The workflow's string literals, which an effect's `&'static` names are drawn from.
+    literals: BTreeMap<String, &'static str>,
 }
 
 impl Registration {
@@ -36,7 +41,56 @@ impl Registration {
             intent: leak(&declaration.intent),
             may: Box::leak(declaration.may.clone().into_boxed_slice()),
             agents: declaration.agents.keys().map(|name| leak(name)).collect(),
+            literals: workflow
+                .literals
+                .iter()
+                .map(|text| (text.clone(), leak(text)))
+                .collect(),
             workflow,
+        }
+    }
+}
+
+impl Registration {
+    fn effect(&self, decision: Decision) -> Effect {
+        // `policy` refuses a name that is not one of the workflow's literals.
+        let literal = |text: &str| self.literals.get(text).copied().unwrap_or_default();
+        match decision {
+            Decision::Attest {
+                context,
+                state,
+                repo,
+                sha,
+            } => Effect::Attest {
+                context: literal(&context),
+                state,
+                repo,
+                sha,
+            },
+            Decision::Await { until } => Effect::Await {
+                until: literal(&until),
+            },
+            // Every Lua string is clean, since untrusted text reaches a script only as a handle.
+            Decision::File {
+                title,
+                target,
+                body,
+            } => Effect::File {
+                title: Title::__compose(title),
+                target,
+                body,
+            },
+            Decision::Ask {
+                question,
+                target,
+                pull,
+                body,
+            } => Effect::Ask {
+                question: Title::__compose(question),
+                target,
+                pull,
+                body,
+            },
         }
     }
 }
@@ -118,13 +172,14 @@ impl Registered for Registration {
                 reads: &self.workflow.reads,
             };
             let failed = |error: crate::Error| StepError(error.to_string());
-            self.workflow
+            let facts = self
+                .workflow
                 .gather(&reading.data, &mut recorded)
                 .await
                 .map_err(failed)?;
-            // Policy comes next. Until then a run decides nothing.
+            let decisions = self.workflow.policy(&facts).map_err(failed)?;
             Ok(Decided {
-                effects: vec![],
+                effects: decisions.into_iter().map(|d| self.effect(d)).collect(),
                 links: vec![],
             })
         })

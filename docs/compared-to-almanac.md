@@ -33,7 +33,7 @@ workflow lives and who enforces its rules:
 | Enforcement | The compiler, with 58 cases in `crates/fails` | 22 rules at load, 24 in a run, 2 lost | Names and shape at load, everything else in a run |
 | Hostile text | `Untrusted<T>`, narrowed to a closed set | A userdata and a closed `taint` table | A userdata with no methods at all |
 | Reads | `cx.observe` by convention; a raw client call compiles | A read outside `observe` is refused | The script holds no client; every call is a catalog read inside `observe` |
-| Policy | A plain function, pure by signature | A fresh pure VM per call | Not built yet; planned as a fresh pure VM |
+| Policy | A plain function, pure by signature | A fresh pure VM per call | A fresh pure VM per run, handed a constructor for each effect it destructured |
 | Events | Generated types, projected by hand per almanac | 117 lines of `github.rs` per almanac | Almanac's generated types, serialized as they are |
 
 The bundling step is planned and not built. Until it exists, the
@@ -100,8 +100,11 @@ text and returns a value from a closed set. The spike found that every
 such function is a possible way out, and every hole it found was in one.
 Reintroducing `narrow` here is where that cost returns.
 
-Policy, effects, agents, prompts, and the catalog's reads are stubs. The
-half of Almanac's design that the spike found hardest to port, a model that
+Agents, prompts, `push`, and the catalog's reads are stubs. Policy runs
+and makes attest, await, file, and ask effects, each checked by its
+constructor where it is made; `push` needs a patch checked by code, which
+no agent makes yet, so its constructor refuses. The half of Almanac's
+design that the spike found hardest to port, a model that
 can veto but never approve, cooled proofs before an agent reads an update,
 and patches checked by code, has nothing to compare against here yet.
 
@@ -114,9 +117,9 @@ counts below exclude comments and blank lines:
 |---|---|
 | Almanac | 749 lines, `taint.rs` and `crates/macros` |
 | Spike | 1,931 lines of Rust and 365 of Fennel and Lua |
-| arbitrary-almanac | 1,221 lines of Rust, with policy and reads unbuilt |
+| arbitrary-almanac | 1,559 lines of Rust, with agents and reads unbuilt |
 
-This repository's tests are 1,115 lines beside that. The comparison
+This repository's tests are 1,337 lines beside that. The comparison
 favours Almanac, which puts the boundary in the type system, and it is
 the price of letting the operator never touch Rust.
 
