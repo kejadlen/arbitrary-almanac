@@ -10,7 +10,6 @@ use mlua::prelude::LuaChunkMode as ChunkMode;
 use mlua::{Function, HookTriggers, Lua, LuaOptions, StdLib, Table, Value, VmState};
 use std::cmp::Ordering;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU32, Ordering as Atomic};
 
 /// How many instructions a run may execute, in thousands.
 const BUDGET: u32 = 10_000;
@@ -63,12 +62,18 @@ impl Sandbox {
     /// A coroutine for `function` that stops once it has spent its instruction budget.
     pub fn thread(&self, function: Function) -> Result<mlua::Thread, Error> {
         let thread = self.lua.create_thread(function)?;
-        let left = AtomicU32::new(BUDGET);
+        let left = Mutex::new(BUDGET);
         let every = HookTriggers::new().every_nth_instruction(1000);
         let hooked = thread.set_hook(every, move |_, _| {
-            match left.fetch_update(Atomic::Relaxed, Atomic::Relaxed, |n| n.checked_sub(1)) {
-                Ok(_) => Ok(VmState::Continue),
-                Err(_) => Err(mlua::Error::runtime("ran past its instruction budget")),
+            let mut left = left
+                .lock()
+                .map_err(|_| mlua::Error::runtime("budget poisoned"))?;
+            match left.checked_sub(1) {
+                Some(n) => {
+                    *left = n;
+                    Ok(VmState::Continue)
+                }
+                None => Err(mlua::Error::runtime("ran past its instruction budget")),
             }
         });
         hooked?;
