@@ -11,7 +11,7 @@ use crate::{Catalog, Error};
 use almanac::effect::EffectKind;
 
 /// The manifest's half that comes from the functions rather than the declaration.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
 pub struct Capabilities {
     pub providers: Vec<String>,
     pub agents: Vec<String>,
@@ -31,7 +31,7 @@ pub fn read(
         return Err(parameters(source, gather, "[{: provider : agent} event]"));
     };
     for (name, at) in names(source, gather, asked)? {
-        if catalog.providers.contains(&name.as_str()) {
+        if catalog.provides(&name) {
             capabilities.providers.push(name);
         } else if declaration.agents.contains_key(&name) {
             capabilities.agents.push(name);

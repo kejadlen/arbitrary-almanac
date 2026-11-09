@@ -10,13 +10,16 @@ mod declaration;
 mod fennel;
 mod form;
 mod gather;
+mod registered;
 mod sandbox;
 mod taint;
 
 pub use capabilities::Capabilities;
 pub use declaration::{Agent, Declaration};
 pub use gather::{Call, Dispatch};
+pub use registered::Registration;
 
+use crate::catalog::{Event, Read};
 use crate::{Catalog, Error};
 use fennel::{Fennel, Source};
 use form::Form;
@@ -30,6 +33,9 @@ pub struct Workflow {
     declaration: Declaration,
     capabilities: Capabilities,
     lua: String,
+    event: Event,
+    /// Every read in the catalog. `gather` reaches only those of the providers it was handed.
+    reads: Vec<Read>,
 }
 
 impl Workflow {
@@ -40,6 +46,13 @@ impl Workflow {
         let forms = fennel.parse(&source)?;
         check_exports(&source, forms.last())?;
         let declaration = read_declaration(&source, &forms)?;
+        let event = catalog
+            .event(&declaration.on)
+            .cloned()
+            .ok_or_else(|| Error::Event {
+                on: declaration.on.clone(),
+                src: source.named(),
+            })?;
         let capabilities = capabilities::read(catalog, &declaration, &source, &forms)?;
         let lua = compile::compile(&fennel, &source, &forms)?;
         Ok(Self {
@@ -47,6 +60,8 @@ impl Workflow {
             declaration,
             capabilities,
             lua,
+            event,
+            reads: catalog.reads.clone(),
         })
     }
 
@@ -139,5 +154,9 @@ fn local_named<'a>(form: &'a Form, name: &str) -> Option<&'a Form> {
 
 #[cfg(test)]
 mod gather_tests;
+#[cfg(test)]
+mod runtime_tests;
+#[cfg(test)]
+mod testing;
 #[cfg(test)]
 mod tests;

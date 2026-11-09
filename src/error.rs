@@ -22,6 +22,17 @@ pub enum Error {
         at: Option<SourceSpan>,
     },
 
+    #[error("no event in this binary is called `{on}`")]
+    #[diagnostic(
+        code(arbitrary_almanac::event),
+        help("`:on` names an event from the catalog, such as :github.check_suite.completed")
+    )]
+    Event {
+        on: String,
+        #[source_code]
+        src: Arc<NamedSource<String>>,
+    },
+
     #[error("{message}")]
     #[diagnostic(code(arbitrary_almanac::compile))]
     Compile {
