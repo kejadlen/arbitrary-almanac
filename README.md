@@ -105,10 +105,12 @@ restates:
 ```
 Cargo.toml          depends on Almanac's crates by git
 src/
-  main.rs           almanac::main_with, plus the build verb
+  lib.rs            the library root
   catalog.rs        every event, provider, and prompt the binary ships
   host/             the Fennel host, promoted from the spike
   bundle.rs         the trailer: write at build, read at startup
+  bin/arbitrary-almanac/
+    main.rs         almanac::main_with, plus the build verb
 prompts/            agent prompts, built into the binary
 workflows/          .fnl workflows, bundled per deployment
 ```
