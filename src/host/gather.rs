@@ -85,7 +85,7 @@ pub async fn run(
     }
 }
 
-fn failed(error: mlua::Error) -> Error {
+pub fn failed(error: mlua::Error) -> Error {
     let message = error.to_string();
     let message = message.strip_prefix("runtime error: ").unwrap_or(&message);
     Error::Run {

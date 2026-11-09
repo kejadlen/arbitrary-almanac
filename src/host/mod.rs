@@ -53,7 +53,10 @@ impl Workflow {
     /// asked for, and returns its facts.
     pub async fn gather(&self, event: &Data, dispatch: &mut impl Dispatch) -> Result<Data, Error> {
         let sandbox = Sandbox::new()?;
-        let exports = sandbox.exports(&self.name, &self.lua)?;
+        // The module's own locals run here too, so their failures are the run's.
+        let exports = sandbox
+            .exports(&self.name, &self.lua)
+            .map_err(gather::failed)?;
         let capabilities = &self.capabilities;
         let granted: Vec<&str> = capabilities
             .providers

@@ -49,14 +49,13 @@ impl Sandbox {
     }
 
     /// Runs compiled source and returns what it exports. Only text is accepted, never bytecode.
-    pub fn exports(&self, name: &str, lua: &str) -> Result<Table, Error> {
-        Ok(self
-            .lua
+    pub fn exports(&self, name: &str, lua: &str) -> mlua::Result<Table> {
+        self.lua
             .load(lua)
             .set_name(format!("@{name}"))
             .set_mode(ChunkMode::Text)
             .set_environment(self.env.clone())
-            .eval()?)
+            .eval()
     }
 
     /// A coroutine for `function` that stops once it has spent its instruction budget.
@@ -88,9 +87,10 @@ fn sorted_pairs(lua: &Lua, table: Table) -> mlua::Result<(Function, Value, Value
     for pair in table.pairs::<Value, Value>() {
         let (key, value) = pair?;
         let rank = match &key {
-            Value::Integer(n) => (0, *n as f64, vec![]),
-            Value::Number(n) => (0, *n, vec![]),
-            Value::String(s) => (1, 0.0, s.as_bytes().to_vec()),
+            // Integers too far apart for an f64 to tell them apart fall back on themselves.
+            Value::Integer(n) => (0, *n as f64, *n, vec![]),
+            Value::Number(n) => (0, *n, *n as i64, vec![]),
+            Value::String(s) => (1, 0.0, 0, s.as_bytes().to_vec()),
             other => {
                 return Err(mlua::Error::runtime(format!(
                     "pairs walks only tables keyed by numbers and strings, not a {}",

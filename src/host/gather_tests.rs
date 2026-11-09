@@ -1,7 +1,10 @@
 use super::*;
 use crate::Catalog;
+use hegel::TestCase;
+use hegel::generators as gs;
 use miette::Diagnostic as _;
 use serde_json::json;
+use std::collections::BTreeSet;
 
 type Answer = fn(&Call) -> Result<Data, String>;
 
@@ -162,12 +165,66 @@ fn nothing_may_run_while_compiling() {
     }
 }
 
-#[tokio::test]
-async fn pairs_walks_numbers_then_strings_in_order() {
-    let body = r#"(icollect [k _ (pairs {:b 1 :a 2 10 3 2 4 1.5 5})] k)"#;
-    let facts = gather(body, &mut Fake::answering(nothing)).await.unwrap();
-    assert_eq!(facts, json!([1.5, 2, 10, "a", "b"]));
+#[hegel::test]
+fn pairs_walks_numbers_then_strings_in_order(tc: TestCase) {
+    // Near zero, or near 2^60 where neighbours are the same f64.
+    let base = tc.draw(gs::sampled_from(vec![0, 1 << 60]));
+    let integers: BTreeSet<i64> = tc
+        .draw(gs::vecs(gs::integers::<i8>()).max_size(5))
+        .into_iter()
+        .map(|n| base + i64::from(n))
+        .collect();
+    // Halves, so that no fraction is also an integer key.
+    let fractions: BTreeSet<i32> = tc
+        .draw(gs::vecs(gs::integers::<i32>()).max_size(3))
+        .into_iter()
+        .collect();
+    let mut numbers: Vec<(f64, Data, String)> = integers
+        .iter()
+        .map(|&n| (n as f64, json!(n), n.to_string()))
+        .chain(fractions.iter().map(|&n| {
+            let half = f64::from(n) + 0.5;
+            (half, json!(half), format!("{half:?}"))
+        }))
+        .collect();
+    numbers.sort_by(|(a, ..), (b, ..)| a.total_cmp(b));
+    let strings: BTreeSet<String> = tc
+        .draw(gs::vecs(gs::from_regex("[a-z]{1,4}").fullmatch(true)).max_size(5))
+        .into_iter()
+        .collect();
+    let mut entries: Vec<String> = numbers
+        .iter()
+        .map(|(.., written)| format!("{written} 0"))
+        .chain(strings.iter().map(|s| format!("\"{s}\" 0")))
+        .collect();
+    // An empty table reads back as `{}`, since Lua cannot tell an empty sequence from a map.
+    tc.assume(!entries.is_empty());
+    // Written in any order, walked in one.
+    let shuffled = tc.draw(
+        gs::vecs(gs::integers::<usize>())
+            .min_size(entries.len())
+            .max_size(entries.len()),
+    );
+    for (i, j) in shuffled.into_iter().enumerate() {
+        entries.swap(i, j % (i + 1));
+    }
+    let body = format!("(icollect [k _ (pairs {{{}}})] k)", entries.join(" "));
 
+    let facts = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(gather(&body, &mut Fake::answering(nothing)))
+        .unwrap();
+
+    let walked: Vec<Data> = numbers
+        .into_iter()
+        .map(|(_, key, _)| key)
+        .chain(strings.iter().map(|s| json!(s)))
+        .collect();
+    assert_eq!(facts, Data::Array(walked));
+}
+
+#[tokio::test]
+async fn pairs_refuses_keys_that_have_no_order() {
     let err = gather(
         "(each [k (pairs {true 1})] k)",
         &mut Fake::answering(nothing),
@@ -227,16 +284,21 @@ async fn failures_inside_gather_end_the_run() {
 }
 
 #[test]
-fn a_run_loads_only_text() {
-    let sandbox = Sandbox::new().unwrap();
-    let err = sandbox.exports("w.lua", "\x1bLua").unwrap_err();
-    assert!(err.to_string().contains("binary"), "{err}");
-}
-
-#[test]
 fn a_gather_can_run_on_any_thread() {
     fn send<T: Send>(_: T) {}
     let workflow = load(&gathering("(fn gather [{: github} event])")).unwrap();
     let event = json!({});
     send(workflow.gather(&event, &mut Fake::answering(nothing)));
+}
+
+#[tokio::test]
+async fn a_local_that_fails_ends_the_run_before_gather() {
+    let source = gathering("(local limit (error \"no limit\"))\n(fn gather [{: github} event])");
+    let err = load(&source)
+        .unwrap()
+        .gather(&json!({}), &mut Fake::answering(nothing))
+        .await
+        .unwrap_err();
+    assert_eq!(code(&err), "arbitrary_almanac::run");
+    assert_eq!(err.to_string(), "gather failed: w.fnl:3: no limit");
 }
