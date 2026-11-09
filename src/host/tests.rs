@@ -392,9 +392,6 @@ fn defining(gather: &str, policy: &str) -> String {
     )
 }
 
-const GATHER: &str = "(fn gather [{: github} event])";
-const POLICY: &str = "(fn policy [facts {: attest}])";
-
 #[test]
 fn capabilities_come_from_what_gather_and_policy_destructure() {
     let source = defining(
@@ -416,10 +413,19 @@ fn capabilities_come_from_what_gather_and_policy_destructure() {
 #[test]
 fn gather_and_policy_are_each_defined_once() {
     let cases = [
-        defining("(fn gathered [{: github} event])", POLICY),
-        defining("(fn gather)", POLICY),
-        defining(&format!("{GATHER}\n{GATHER}"), POLICY),
-        defining(GATHER, "(fn policy-of [facts {: attest}])"),
+        defining(
+            "(fn gathered [{: github} event])",
+            "(fn policy [facts {: attest}])",
+        ),
+        defining("(fn gather)", "(fn policy [facts {: attest}])"),
+        defining(
+            "(fn gather [{: github} event])\n(fn gather [{: github} event])",
+            "(fn policy [facts {: attest}])",
+        ),
+        defining(
+            "(fn gather [{: github} event])",
+            "(fn policy-of [facts {: attest}])",
+        ),
     ];
     for source in cases {
         let err = load(&source).unwrap_err();
@@ -431,27 +437,36 @@ fn gather_and_policy_are_each_defined_once() {
 fn gather_and_policy_take_their_capabilities_as_a_table() {
     let cases = [
         (
-            defining("(fn gather [cx event])", POLICY),
+            defining("(fn gather [cx event])", "(fn policy [facts {: attest}])"),
             "gather must take [{: provider : agent} event]",
             "(fn gather [cx event])",
         ),
         (
-            defining("(fn gather [{: github}])", POLICY),
+            defining("(fn gather [{: github}])", "(fn policy [facts {: attest}])"),
             "gather must take [{: provider : agent} event]",
             "(fn gather [{: github}])",
         ),
         (
-            defining(GATHER, "(fn policy [{: attest} facts])"),
+            defining(
+                "(fn gather [{: github} event])",
+                "(fn policy [{: attest} facts])",
+            ),
             "policy must take [facts {: effect}]",
             "(fn policy [{: attest} facts])",
         ),
         (
-            defining("(fn gather [{:github [a b]} event])", POLICY),
+            defining(
+                "(fn gather [{:github [a b]} event])",
+                "(fn policy [facts {: attest}])",
+            ),
             "a plain `: name`",
             "[a b]",
         ),
         (
-            defining(GATHER, "(fn policy [facts {1 attest}])"),
+            defining(
+                "(fn gather [{: github} event])",
+                "(fn policy [facts {1 attest}])",
+            ),
             "a plain `: name`",
             "attest",
         ),
@@ -468,15 +483,24 @@ fn gather_and_policy_take_their_capabilities_as_a_table() {
 fn a_capability_must_be_something_the_workflow_may_have() {
     let cases = [
         (
-            defining("(fn gather [{: github : linear} event])", POLICY),
+            defining(
+                "(fn gather [{: github : linear} event])",
+                "(fn policy [facts {: attest}])",
+            ),
             "gather cannot be handed `linear`: no provider or agent has that name",
         ),
         (
-            defining(GATHER, "(fn policy [facts {: ask}])"),
+            defining(
+                "(fn gather [{: github} event])",
+                "(fn policy [facts {: ask}])",
+            ),
             "policy cannot be handed `ask`: it is not in :may",
         ),
         (
-            defining(GATHER, "(fn policy [facts {: merge}])"),
+            defining(
+                "(fn gather [{: github} event])",
+                "(fn policy [facts {: merge}])",
+            ),
             "policy cannot be handed `merge`: Almanac has no such effect",
         ),
     ];

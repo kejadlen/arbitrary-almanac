@@ -18,9 +18,6 @@ pub struct Capabilities {
     pub effects: Vec<EffectKind>,
 }
 
-const GATHER: &str = "gather";
-const POLICY: &str = "policy";
-
 pub fn read(
     catalog: &Catalog,
     declaration: &Declaration,
@@ -29,7 +26,7 @@ pub fn read(
 ) -> Result<Capabilities, Error> {
     let mut capabilities = Capabilities::default();
 
-    let gather = &function(source, forms, GATHER)?;
+    let gather = &function(source, forms, "gather")?;
     let [Form::Table(asked, _), Form::Symbol(..)] = gather.params else {
         return Err(parameters(source, gather, "[{: provider : agent} event]"));
     };
@@ -49,7 +46,7 @@ pub fn read(
         }
     }
 
-    let policy = &function(source, forms, POLICY)?;
+    let policy = &function(source, forms, "policy")?;
     let mut effects = Vec::new();
     let [Form::Symbol(..), Form::Table(asked, _)] = policy.params else {
         return Err(parameters(source, policy, "[facts {: effect}]"));
