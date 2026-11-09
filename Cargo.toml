@@ -8,10 +8,14 @@ name = "arbitrary-almanac"
 path = "src/bin/arbitrary-almanac/main.rs"
 
 [dependencies]
+almanac = { git = "https://github.com/ivy/almanac", branch = "alpha/main" }
 clap = { version = "*", features = ["derive", "env"] }
 clap_complete = "*"
 fs-err = "*"
 miette = { version = "*", features = ["fancy"] }
+mlua = { version = "*", features = ["lua54", "vendored"] }
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
 thiserror = "*"
 tokio = { version = "*", features = ["full"] }
 tracing = "*"
@@ -19,7 +23,7 @@ tracing-subscriber = { version = "*", features = ["env-filter"] }
 
 [dev-dependencies]
 assert_cmd = "*"
-hegeltest = "*"
+hegeltest = { version = "*", default-features = false, features = ["static-engine"] }
 predicates = "*"
 tempfile = "*"
 
