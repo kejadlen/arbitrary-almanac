@@ -22,6 +22,45 @@ pub enum Error {
         at: Option<SourceSpan>,
     },
 
+    #[error("{message}")]
+    #[diagnostic(code(arbitrary_almanac::compile))]
+    Compile {
+        message: String,
+        #[source_code]
+        src: Arc<NamedSource<String>>,
+        #[label("here")]
+        at: Option<SourceSpan>,
+    },
+
+    #[error(
+        "only (local ...) and (fn ...) may come before the exports, because the top level runs on every run"
+    )]
+    #[diagnostic(code(arbitrary_almanac::top_level))]
+    TopLevel {
+        #[source_code]
+        src: Arc<NamedSource<String>>,
+        #[label("not a local or a function")]
+        at: Option<SourceSpan>,
+    },
+
+    #[error("`{form}` runs code while compiling, so a workflow may not use it")]
+    #[diagnostic(code(arbitrary_almanac::compile_time))]
+    CompileTime {
+        form: String,
+        #[source_code]
+        src: Arc<NamedSource<String>>,
+        #[label("here")]
+        at: Option<SourceSpan>,
+    },
+
+    /// A run of a workflow's function failed.
+    #[error("{function} failed: {message}")]
+    #[diagnostic(code(arbitrary_almanac::run))]
+    Run {
+        function: &'static str,
+        message: String,
+    },
+
     #[error("a workflow must end with {{: declare : gather : policy}}")]
     #[diagnostic(code(arbitrary_almanac::exports))]
     Exports {

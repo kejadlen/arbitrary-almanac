@@ -32,6 +32,15 @@ impl Source {
         Arc::clone(&self.named)
     }
 
+    /// The first line of a Fennel error, and where in this source it points.
+    fn located(&self, error: &mlua::Error) -> (String, Option<SourceSpan>) {
+        let message = error.to_string();
+        let message = message.strip_prefix("runtime error: ").unwrap_or(&message);
+        let first = message.lines().next().unwrap_or_default().to_string();
+        let at = self.offset_of(&first);
+        (first, at)
+    }
+
     /// Where a Fennel error message such as `w.fnl:3:7: Parse error: ...` points.
     pub(super) fn offset_of(&self, message: &str) -> Option<SourceSpan> {
         let rest = message.strip_prefix(&self.name)?.strip_prefix(':')?;
@@ -77,13 +86,32 @@ impl Fennel {
             Ok(forms)
         };
         read().map_err(|e| {
-            let message = e.to_string();
-            let message = message.strip_prefix("runtime error: ").unwrap_or(&message);
-            let first = message.lines().next().unwrap_or_default().to_string();
+            let (message, at) = source.located(&e);
             Error::Parse {
-                at: source.offset_of(&first),
-                message: first,
+                message,
                 src: source.named(),
+                at,
+            }
+        })
+    }
+
+    /// Compiles `source` to Lua. A name that is neither a local nor in `globals` is a compile
+    /// error, so a workflow cannot even mention what a run will not hand it.
+    pub fn compile(&self, source: &Source, globals: &[&str]) -> Result<String, Error> {
+        let fennel: Table = self.lua.named_registry_value(form::FENNEL)?;
+        let compile: Function = fennel.get("compileString")?;
+        let options = self.lua.create_table()?;
+        options.set("filename", source.name.as_str())?;
+        // Keep Lua's line numbers on the Fennel lines they came from, so run errors point there.
+        options.set("correlate", true)?;
+        let allowed = self.lua.create_sequence_from(globals.iter().copied())?;
+        options.set("allowedGlobals", allowed)?;
+        compile.call((source.text.as_str(), options)).map_err(|e| {
+            let (message, at) = source.located(&e);
+            Error::Compile {
+                message,
+                src: source.named(),
+                at,
             }
         })
     }
