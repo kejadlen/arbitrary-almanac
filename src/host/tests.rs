@@ -1,5 +1,4 @@
 use super::*;
-use crate::Catalog;
 use almanac::effect::EffectKind;
 use hegel::TestCase;
 use hegel::generators::{self as gs, Generator as _};
@@ -10,13 +9,7 @@ use std::collections::BTreeMap;
 const MINIMAL: &str = r#"{:name :n :on :e :intent "i" :may [] :runs-per-hour 1}"#;
 
 fn load(source: &str) -> Result<Workflow, Error> {
-    Workflow::load(&catalog(), "w.fnl", source)
-}
-
-fn catalog() -> Catalog {
-    Catalog {
-        providers: vec!["github", "ages"],
-    }
+    Workflow::load(&super::testing::catalog(), "w.fnl", source)
 }
 
 /// A workflow that declares `declare`, with a gather and a policy that ask for nothing.
@@ -371,7 +364,9 @@ fn declarations(tc: &TestCase) -> Declaration {
     };
     Declaration {
         name: tc.draw(text()),
-        on: tc.draw(text()),
+        on: tc
+            .draw(gs::sampled_from(vec!["e", "github.check_suite.completed"]))
+            .to_string(),
         intent: tc.draw(text()),
         may: tc.draw(gs::vecs(gs::sampled_from(kinds)).max_size(5)),
         runs_per_hour: tc.draw(gs::integers::<u32>()),
@@ -592,5 +587,16 @@ fn a_workflow_is_handed_exactly_what_it_destructures(tc: TestCase) {
             agents: asked_agents.into_iter().cloned().collect(),
             effects: in_may_order,
         }
+    );
+}
+
+#[test]
+fn a_workflow_runs_only_on_an_event_the_binary_ships() {
+    let source = declaring(r#"{:name :n :on :github.push :intent "i" :may [] :runs-per-hour 1}"#);
+    let err = load(&source).unwrap_err();
+    assert_eq!(code(&err), "arbitrary_almanac::event");
+    assert_eq!(
+        err.to_string(),
+        "no event in this binary is called `github.push`"
     );
 }

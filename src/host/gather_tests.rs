@@ -1,5 +1,4 @@
 use super::*;
-use crate::Catalog;
 use hegel::TestCase;
 use hegel::generators as gs;
 use miette::Diagnostic as _;
@@ -48,10 +47,7 @@ fn gathering(gather: &str) -> String {
 }
 
 fn load(source: &str) -> Result<Workflow, Error> {
-    let catalog = Catalog {
-        providers: vec!["github", "ages"],
-    };
-    Workflow::load(&catalog, "w.fnl", source)
+    Workflow::load(&super::testing::catalog(), "w.fnl", source)
 }
 
 async fn gather(body: &str, dispatch: &mut Fake) -> Result<Data, Error> {

@@ -12,6 +12,8 @@ almanac = { git = "https://github.com/ivy/almanac", branch = "alpha/main" }
 clap = { version = "*", features = ["derive", "env"] }
 clap_complete = "*"
 fs-err = "*"
+futures = "*"
+github = { git = "https://github.com/ivy/almanac", branch = "alpha/main" }
 miette = { version = "*", features = ["fancy"] }
 mlua = { version = "*", features = ["lua54", "vendored", "async", "send", "serde"] }
 serde = { version = "*", features = ["derive"] }
