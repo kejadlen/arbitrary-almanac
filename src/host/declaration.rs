@@ -1,7 +1,7 @@
 //! What a workflow says about itself, read without running it.
 
 use almanac::effect::EffectKind;
-use serde::de::value::StrDeserializer;
+use serde::de::value::{self, StrDeserializer};
 use serde::de::{Error as _, Unexpected};
 use serde::{Deserialize, Deserializer};
 use std::collections::BTreeMap;
@@ -29,25 +29,21 @@ pub struct Agent {
     pub vars: Vec<String>,
 }
 
-/// Effects as a workflow names them, `:attest` for Almanac's `Attest`, read by `EffectKind`'s own
+/// An effect as a workflow names it, `:attest` for Almanac's `Attest`, read by `EffectKind`'s own
 /// `Deserialize` so the set stays Almanac's.
+pub fn effect_kind(name: &str) -> Option<EffectKind> {
+    let mut chars = name.chars();
+    let first = chars.next().filter(char::is_ascii_lowercase)?;
+    let capitalized = first.to_ascii_uppercase().to_string() + chars.as_str();
+    EffectKind::deserialize(StrDeserializer::<value::Error>::new(&capitalized)).ok()
+}
+
 fn effect_kinds<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<EffectKind>, D::Error> {
     let names = Vec::<String>::deserialize(deserializer)?;
-    names
-        .iter()
-        .map(|name| {
-            let mut chars = name.chars();
-            let first = chars
-                .next()
-                .filter(char::is_ascii_lowercase)
-                .ok_or_else(|| {
-                    D::Error::invalid_value(
-                        Unexpected::Str(name),
-                        &"a lowercase effect, such as :attest",
-                    )
-                })?;
-            let capitalized = first.to_ascii_uppercase().to_string() + chars.as_str();
-            EffectKind::deserialize(StrDeserializer::<D::Error>::new(&capitalized))
+    let kind = |name: &String| {
+        effect_kind(name).ok_or_else(|| {
+            D::Error::invalid_value(Unexpected::Str(name), &"an effect such as :attest")
         })
-        .collect()
+    };
+    names.iter().map(kind).collect()
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::Catalog;
 use almanac::effect::EffectKind;
 use hegel::TestCase;
 use hegel::generators::{self as gs, Generator as _};
@@ -9,7 +10,13 @@ use std::collections::BTreeMap;
 const MINIMAL: &str = r#"{:name :n :on :e :intent "i" :may [] :runs-per-hour 1}"#;
 
 fn load(source: &str) -> Result<Workflow, Error> {
-    Workflow::load("w.fnl", source)
+    Workflow::load(&catalog(), "w.fnl", source)
+}
+
+fn catalog() -> Catalog {
+    Catalog {
+        providers: vec!["github", "ages"],
+    }
 }
 
 /// A workflow that declares `declare`, with a gather and a policy that ask for nothing.
@@ -226,15 +233,15 @@ fn a_declaration_must_have_the_right_shape() {
         ),
         (
             r#"{:name :n :on :e :intent "i" :may [:merge] :runs-per-hour 1}"#,
-            "unknown variant `Merge`",
+            "invalid value: string \"merge\"",
         ),
         (
             r#"{:name :n :on :e :intent "i" :may [:Attest] :runs-per-hour 1}"#,
-            "invalid value: string \"Attest\", expected a lowercase effect, such as :attest",
+            "invalid value: string \"Attest\", expected an effect such as :attest",
         ),
         (
             r#"{:name :n :on :e :intent "i" :may [""] :runs-per-hour 1}"#,
-            "invalid value: string \"\", expected a lowercase effect, such as :attest",
+            "invalid value: string \"\", expected an effect such as :attest",
         ),
         (
             r#"{:name :n :on :e :intent "i" :may :attest :runs-per-hour 1}"#,
@@ -372,4 +379,112 @@ fn any_declaration_reads_back_as_written(tc: TestCase) {
 #[hegel::test]
 fn any_text_loads_or_is_refused_without_panicking(tc: TestCase) {
     let _ = load(&tc.draw(gs::text()));
+}
+
+/// A workflow that may attest and push, has a `fixer` agent, and defines `gather` and `policy`.
+fn defining(gather: &str, policy: &str) -> String {
+    format!(
+        r#"(local declare {{:name :n :on :e :intent "i" :may [:attest :push] :runs-per-hour 1
+                         :agents {{:fixer {{:prompt :fixer}}}}}})
+{gather}
+{policy}
+{{: declare : gather : policy}}"#
+    )
+}
+
+const GATHER: &str = "(fn gather [{: github} event])";
+const POLICY: &str = "(fn policy [facts {: attest}])";
+
+#[test]
+fn capabilities_come_from_what_gather_and_policy_destructure() {
+    let source = defining(
+        "(fn gather [{: github : fixer :ages a} event])",
+        "(fn policy [facts {: push : attest}])",
+    );
+    let workflow = load(&source).unwrap();
+
+    assert_eq!(
+        workflow.capabilities(),
+        &Capabilities {
+            providers: vec!["ages".into(), "github".into()],
+            agents: vec!["fixer".into()],
+            effects: vec![EffectKind::Attest, EffectKind::Push],
+        }
+    );
+}
+
+#[test]
+fn gather_and_policy_are_each_defined_once() {
+    let cases = [
+        defining("(fn gathered [{: github} event])", POLICY),
+        defining("(fn gather)", POLICY),
+        defining(&format!("{GATHER}\n{GATHER}"), POLICY),
+        defining(GATHER, "(fn policy-of [facts {: attest}])"),
+    ];
+    for source in cases {
+        let err = load(&source).unwrap_err();
+        assert_eq!(code(&err), "arbitrary_almanac::undefined", "{source}");
+    }
+}
+
+#[test]
+fn gather_and_policy_take_their_capabilities_as_a_table() {
+    let cases = [
+        (
+            defining("(fn gather [cx event])", POLICY),
+            "gather must take [{: provider : agent} event]",
+            "(fn gather [cx event])",
+        ),
+        (
+            defining("(fn gather [{: github}])", POLICY),
+            "gather must take [{: provider : agent} event]",
+            "(fn gather [{: github}])",
+        ),
+        (
+            defining(GATHER, "(fn policy [{: attest} facts])"),
+            "policy must take [facts {: effect}]",
+            "(fn policy [{: attest} facts])",
+        ),
+        (
+            defining("(fn gather [{:github [a b]} event])", POLICY),
+            "a plain `: name`",
+            "[a b]",
+        ),
+        (
+            defining(GATHER, "(fn policy [facts {1 attest}])"),
+            "a plain `: name`",
+            "attest",
+        ),
+    ];
+    for (source, message, label) in cases {
+        let err = load(&source).unwrap_err();
+        assert_eq!(code(&err), "arbitrary_almanac::parameters", "{source}");
+        assert!(err.to_string().contains(message), "{err}");
+        assert_eq!(labelled(&err, &source).as_deref(), Some(label));
+    }
+}
+
+#[test]
+fn a_capability_must_be_something_the_workflow_may_have() {
+    let cases = [
+        (
+            defining("(fn gather [{: github : linear} event])", POLICY),
+            "gather cannot be handed `linear`: no provider or agent has that name",
+        ),
+        (
+            defining(GATHER, "(fn policy [facts {: ask}])"),
+            "policy cannot be handed `ask`: it is not in :may",
+        ),
+        (
+            defining(GATHER, "(fn policy [facts {: merge}])"),
+            "policy cannot be handed `merge`: Almanac has no such effect",
+        ),
+    ];
+    for (source, message) in cases {
+        let err = load(&source).unwrap_err();
+        assert_eq!(code(&err), "arbitrary_almanac::capability", "{source}");
+        assert_eq!(err.to_string(), message);
+        let name = message.split('`').nth(1).unwrap();
+        assert_eq!(labelled(&err, &source).as_deref(), Some(name));
+    }
 }

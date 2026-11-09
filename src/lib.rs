@@ -9,7 +9,9 @@
     )
 )]
 
+pub mod catalog;
 mod error;
 pub mod host;
 
+pub use catalog::Catalog;
 pub use error::Error;

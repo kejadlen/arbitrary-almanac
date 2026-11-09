@@ -7,6 +7,7 @@ use super::form::{self, Form};
 use crate::Error;
 use miette::{NamedSource, SourceSpan};
 use mlua::{Function, Lua, LuaOptions, StdLib, Table, Value};
+use std::sync::Arc;
 
 const FENNEL: &str = include_str!("../../vendor/fennel.lua");
 
@@ -14,6 +15,8 @@ const FENNEL: &str = include_str!("../../vendor/fennel.lua");
 pub struct Source {
     name: String,
     text: String,
+    /// Shared by every error about this source, so each one carries only a pointer.
+    named: Arc<NamedSource<String>>,
 }
 
 impl Source {
@@ -21,11 +24,12 @@ impl Source {
         Self {
             name: name.to_string(),
             text: text.to_string(),
+            named: Arc::new(NamedSource::new(name, text.to_string())),
         }
     }
 
-    pub fn named(&self) -> NamedSource<String> {
-        NamedSource::new(&self.name, self.text.clone())
+    pub fn named(&self) -> Arc<NamedSource<String>> {
+        Arc::clone(&self.named)
     }
 
     /// Where a Fennel error message such as `w.fnl:3:7: Parse error: ...` points.
