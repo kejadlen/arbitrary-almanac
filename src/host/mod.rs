@@ -4,13 +4,15 @@
 //! a literal, so it is read as data straight from the parsed source, and nothing in the file runs
 //! to produce it.
 
+mod capabilities;
 mod declaration;
 mod fennel;
 mod form;
 
+pub use capabilities::Capabilities;
 pub use declaration::{Agent, Declaration};
 
-use crate::Error;
+use crate::{Catalog, Error};
 use fennel::{Fennel, Source};
 use form::Form;
 
@@ -18,20 +20,30 @@ use form::Form;
 #[derive(Debug)]
 pub struct Workflow {
     declaration: Declaration,
+    capabilities: Capabilities,
 }
 
 impl Workflow {
     /// Reads a workflow from its source. `name` labels errors, usually the file name.
-    pub fn load(name: &str, source: &str) -> Result<Self, Error> {
+    pub fn load(catalog: &Catalog, name: &str, source: &str) -> Result<Self, Error> {
         let source = Source::new(name, source);
         let forms = Fennel::new()?.parse(&source)?;
         check_exports(&source, forms.last())?;
         let declaration = read_declaration(&source, &forms)?;
-        Ok(Self { declaration })
+        let capabilities = capabilities::read(catalog, &declaration, &source, &forms)?;
+        Ok(Self {
+            declaration,
+            capabilities,
+        })
     }
 
     pub fn declaration(&self) -> &Declaration {
         &self.declaration
+    }
+
+    /// What `gather` and `policy` may use, from what they destructure.
+    pub fn capabilities(&self) -> &Capabilities {
+        &self.capabilities
     }
 }
 

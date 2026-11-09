@@ -1,4 +1,5 @@
 use super::*;
+use crate::Catalog;
 use almanac::effect::EffectKind;
 use hegel::TestCase;
 use hegel::generators::{self as gs, Generator as _};
@@ -9,7 +10,13 @@ use std::collections::BTreeMap;
 const MINIMAL: &str = r#"{:name :n :on :e :intent "i" :may [] :runs-per-hour 1}"#;
 
 fn load(source: &str) -> Result<Workflow, Error> {
-    Workflow::load("w.fnl", source)
+    Workflow::load(&catalog(), "w.fnl", source)
+}
+
+fn catalog() -> Catalog {
+    Catalog {
+        providers: vec!["github", "ages"],
+    }
 }
 
 /// A workflow that declares `declare`, with a gather and a policy that ask for nothing.
@@ -226,15 +233,15 @@ fn a_declaration_must_have_the_right_shape() {
         ),
         (
             r#"{:name :n :on :e :intent "i" :may [:merge] :runs-per-hour 1}"#,
-            "unknown variant `Merge`",
+            "invalid value: string \"merge\"",
         ),
         (
             r#"{:name :n :on :e :intent "i" :may [:Attest] :runs-per-hour 1}"#,
-            "invalid value: string \"Attest\", expected a lowercase effect, such as :attest",
+            "invalid value: string \"Attest\", expected an effect such as :attest",
         ),
         (
             r#"{:name :n :on :e :intent "i" :may [""] :runs-per-hour 1}"#,
-            "invalid value: string \"\", expected a lowercase effect, such as :attest",
+            "invalid value: string \"\", expected an effect such as :attest",
         ),
         (
             r#"{:name :n :on :e :intent "i" :may :attest :runs-per-hour 1}"#,
@@ -372,4 +379,205 @@ fn any_declaration_reads_back_as_written(tc: TestCase) {
 #[hegel::test]
 fn any_text_loads_or_is_refused_without_panicking(tc: TestCase) {
     let _ = load(&tc.draw(gs::text()));
+}
+
+/// A workflow that may attest and push, has a `fixer` agent, and defines `gather` and `policy`.
+fn defining(gather: &str, policy: &str) -> String {
+    format!(
+        r#"(local declare {{:name :n :on :e :intent "i" :may [:attest :push] :runs-per-hour 1
+                         :agents {{:fixer {{:prompt :fixer}}}}}})
+{gather}
+{policy}
+{{: declare : gather : policy}}"#
+    )
+}
+
+#[test]
+fn capabilities_come_from_what_gather_and_policy_destructure() {
+    let source = defining(
+        "(fn gather [{: github : fixer :ages a} event])",
+        "(fn policy [facts {: push : attest}])",
+    );
+    let workflow = load(&source).unwrap();
+
+    assert_eq!(
+        workflow.capabilities(),
+        &Capabilities {
+            providers: vec!["ages".into(), "github".into()],
+            agents: vec!["fixer".into()],
+            effects: vec![EffectKind::Attest, EffectKind::Push],
+        }
+    );
+}
+
+#[test]
+fn gather_and_policy_are_each_defined_once() {
+    let cases = [
+        defining(
+            "(fn gathered [{: github} event])",
+            "(fn policy [facts {: attest}])",
+        ),
+        defining("(fn gather)", "(fn policy [facts {: attest}])"),
+        defining(
+            "(fn gather [{: github} event])\n(fn gather [{: github} event])",
+            "(fn policy [facts {: attest}])",
+        ),
+        defining(
+            "(fn gather [{: github} event])",
+            "(fn policy-of [facts {: attest}])",
+        ),
+    ];
+    for source in cases {
+        let err = load(&source).unwrap_err();
+        assert_eq!(code(&err), "arbitrary_almanac::undefined", "{source}");
+    }
+}
+
+#[test]
+fn gather_and_policy_take_their_capabilities_as_a_table() {
+    let cases = [
+        (
+            defining("(fn gather [cx event])", "(fn policy [facts {: attest}])"),
+            "gather must take [{: provider : agent} event]",
+            "(fn gather [cx event])",
+        ),
+        (
+            defining("(fn gather [{: github}])", "(fn policy [facts {: attest}])"),
+            "gather must take [{: provider : agent} event]",
+            "(fn gather [{: github}])",
+        ),
+        (
+            defining(
+                "(fn gather [{: github} event])",
+                "(fn policy [{: attest} facts])",
+            ),
+            "policy must take [facts {: effect}]",
+            "(fn policy [{: attest} facts])",
+        ),
+        (
+            defining(
+                "(fn gather [{:github [a b]} event])",
+                "(fn policy [facts {: attest}])",
+            ),
+            "a plain `: name`",
+            "[a b]",
+        ),
+        (
+            defining(
+                "(fn gather [{: github} event])",
+                "(fn policy [facts {1 attest}])",
+            ),
+            "a plain `: name`",
+            "attest",
+        ),
+    ];
+    for (source, message, label) in cases {
+        let err = load(&source).unwrap_err();
+        assert_eq!(code(&err), "arbitrary_almanac::parameters", "{source}");
+        assert!(err.to_string().contains(message), "{err}");
+        assert_eq!(labelled(&err, &source).as_deref(), Some(label));
+    }
+}
+
+#[test]
+fn a_capability_must_be_something_the_workflow_may_have() {
+    let cases = [
+        (
+            defining(
+                "(fn gather [{: github : linear} event])",
+                "(fn policy [facts {: attest}])",
+            ),
+            "gather cannot be handed `linear`: no provider or agent has that name",
+        ),
+        (
+            defining(
+                "(fn gather [{: github} event])",
+                "(fn policy [facts {: ask}])",
+            ),
+            "policy cannot be handed `ask`: it is not in :may",
+        ),
+        (
+            defining(
+                "(fn gather [{: github} event])",
+                "(fn policy [facts {: merge}])",
+            ),
+            "policy cannot be handed `merge`: Almanac has no such effect",
+        ),
+    ];
+    for (source, message) in cases {
+        let err = load(&source).unwrap_err();
+        assert_eq!(code(&err), "arbitrary_almanac::capability", "{source}");
+        assert_eq!(err.to_string(), message);
+        let name = message.split('`').nth(1).unwrap();
+        assert_eq!(labelled(&err, &source).as_deref(), Some(name));
+    }
+}
+
+#[hegel::test]
+fn a_workflow_is_handed_exactly_what_it_destructures(tc: TestCase) {
+    let kinds = vec![
+        EffectKind::Attest,
+        EffectKind::Await,
+        EffectKind::File,
+        EffectKind::Ask,
+        EffectKind::Push,
+    ];
+    // Ending in a digit, so that no name is one of Fennel's special forms.
+    let name = || gs::from_regex("[a-z][a-z-]{0,5}[0-9]").fullmatch(true);
+    let agents: BTreeMap<String, ()> = tc
+        .draw(gs::vecs(name()).max_size(3))
+        .into_iter()
+        .map(|agent| (agent, ()))
+        .collect();
+    let may = tc.draw(gs::vecs(gs::sampled_from(kinds.clone())).max_size(5));
+    let mut providers = tc.draw(gs::vecs(gs::sampled_from(vec!["ages", "github"])).max_size(2));
+    providers.sort();
+    providers.dedup();
+    let asked_agents: Vec<&String> = agents.keys().filter(|_| tc.draw(gs::booleans())).collect();
+    let effects: Vec<EffectKind> = kinds
+        .iter()
+        .copied()
+        .filter(|kind| may.contains(kind) && tc.draw(gs::booleans()))
+        .collect();
+
+    let lower = |kind: &EffectKind| format!("{kind:?}").to_lowercase();
+    let destructure = |names: Vec<String>| {
+        let names: Vec<String> = names.iter().map(|n| format!(": {n}")).collect();
+        format!("{{{}}}", names.join(" "))
+    };
+    let gather_names = providers
+        .iter()
+        .map(|p| p.to_string())
+        .chain(asked_agents.iter().map(|a| a.to_string()))
+        .collect();
+    let source = format!(
+        "(local declare {{:name :n :on :e :intent \"i\" :may [{}] :runs-per-hour 1 :agents {{{}}}}})
+(fn gather [{} event])
+(fn policy [facts {}])
+{{: declare : gather : policy}}",
+        may.iter().map(|k| format!(":{}", lower(k))).collect::<Vec<_>>().join(" "),
+        agents.keys().map(|a| format!("{} {{:prompt :p}}", quoted(a))).collect::<Vec<_>>().join(" "),
+        destructure(gather_names),
+        destructure(effects.iter().map(lower).collect()),
+    );
+    let workflow = load(&source).unwrap();
+
+    let in_may_order: Vec<EffectKind> = may
+        .iter()
+        .copied()
+        .filter(|kind| effects.contains(kind))
+        .fold(vec![], |mut seen, kind| {
+            if !seen.contains(&kind) {
+                seen.push(kind);
+            }
+            seen
+        });
+    assert_eq!(
+        workflow.capabilities(),
+        &Capabilities {
+            providers: providers.iter().map(|p| p.to_string()).collect(),
+            agents: asked_agents.into_iter().cloned().collect(),
+            effects: in_may_order,
+        }
+    );
 }
