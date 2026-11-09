@@ -6,19 +6,9 @@
 use super::form::{self, Form};
 use crate::Error;
 use miette::{NamedSource, SourceSpan};
-use mlua::{Function, Lua, LuaOptions, StdLib, Table};
+use mlua::{Function, Lua, LuaOptions, StdLib, Table, Value};
 
 const FENNEL: &str = include_str!("../../vendor/fennel.lua");
-
-/// Collects every top-level form of a source string into one sequence.
-const PARSE: &str = r"
-local fennel, source, name = ...
-local forms = {}
-for _, form in fennel.parser(source, name) do
-  table.insert(forms, form)
-end
-return forms
-";
 
 /// A workflow's text and the name its errors carry.
 pub struct Source {
@@ -55,9 +45,9 @@ impl Source {
     }
 }
 
+/// A VM with the Fennel module in its registry, where [`Form`]'s conversion also finds it.
 pub struct Fennel {
     lua: Lua,
-    module: Table,
 }
 
 impl Fennel {
@@ -66,23 +56,31 @@ impl Fennel {
         let lua = Lua::new_with(libs, LuaOptions::default())?;
         let module: Table = lua.load(FENNEL).set_name("fennel.lua").eval()?;
         lua.set_named_registry_value(form::FENNEL, &module)?;
-        Ok(Self { lua, module })
+        Ok(Self { lua })
     }
 
-    /// Every top-level form in `source`.
+    /// Every top-level form in `source`, read by driving Fennel's `parser` iterator from Rust.
     pub fn parse(&self, source: &Source) -> Result<Vec<Form>, Error> {
-        let parse: Function = self.lua.load(PARSE).set_name("parse").into_function()?;
-        parse
-            .call((&self.module, source.text.as_str(), source.name.as_str()))
-            .map_err(|e| {
-                let message = e.to_string();
-                let message = message.strip_prefix("runtime error: ").unwrap_or(&message);
-                let first = message.lines().next().unwrap_or_default().to_string();
-                Error::Parse {
-                    at: source.offset_of(&first),
-                    message: first,
-                    src: source.named(),
-                }
-            })
+        let fennel: Table = self.lua.named_registry_value(form::FENNEL)?;
+        let parser: Function = fennel.get("parser")?;
+        let read = || -> mlua::Result<Vec<Form>> {
+            let (next, state): (Function, Value) =
+                parser.call((source.text.as_str(), source.name.as_str()))?;
+            let mut forms = Vec::new();
+            while let (_, Some(form)) = next.call::<(Value, Option<Form>)>(&state)? {
+                forms.push(form);
+            }
+            Ok(forms)
+        };
+        read().map_err(|e| {
+            let message = e.to_string();
+            let message = message.strip_prefix("runtime error: ").unwrap_or(&message);
+            let first = message.lines().next().unwrap_or_default().to_string();
+            Error::Parse {
+                at: source.offset_of(&first),
+                message: first,
+                src: source.named(),
+            }
+        })
     }
 }
