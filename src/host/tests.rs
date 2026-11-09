@@ -1,4 +1,5 @@
 use super::*;
+use almanac::effect::EffectKind;
 use miette::{Diagnostic as _, SourceSpan};
 
 const WORKFLOW: &str = r#"
@@ -49,7 +50,7 @@ fn reads_a_declaration_without_running_anything() {
             name: "build-failures".into(),
             on: "github.check_suite.completed".into(),
             intent: "Repair a Renovate update whose build fails".into(),
-            may: vec![May::Attest, May::Ask, May::Push],
+            may: vec![EffectKind::Attest, EffectKind::Ask, EffectKind::Push],
             runs_per_hour: 30,
             agents: [(
                 "fixer".to_string(),
@@ -193,7 +194,7 @@ fn a_declaration_must_have_the_right_shape() {
         (
             ":may [:attest :ask :push]",
             ":may [:merge]",
-            "unknown variant `merge`",
+            "unknown variant `Merge`",
         ),
         (
             ":vars [:repo]",

@@ -8,7 +8,7 @@ mod declaration;
 mod fennel;
 mod form;
 
-pub use declaration::{Agent, Declaration, May};
+pub use declaration::{Agent, Declaration};
 
 use crate::Error;
 use fennel::{Fennel, Source};
