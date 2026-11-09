@@ -69,13 +69,13 @@ pub fn read(
 
     capabilities.providers.sort();
     capabilities.agents.sort();
-    // In the order `:may` lists them, since Almanac's effects have no order of their own.
-    capabilities.effects = declaration
-        .may
-        .iter()
-        .copied()
-        .filter(|kind| effects.contains(kind))
-        .collect();
+    // Once each, in the order `:may` first lists them, since Almanac's effects have no order of
+    // their own.
+    for kind in &declaration.may {
+        if effects.contains(kind) && !capabilities.effects.contains(kind) {
+            capabilities.effects.push(*kind);
+        }
+    }
     Ok(capabilities)
 }
 

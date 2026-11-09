@@ -512,3 +512,72 @@ fn a_capability_must_be_something_the_workflow_may_have() {
         assert_eq!(labelled(&err, &source).as_deref(), Some(name));
     }
 }
+
+#[hegel::test]
+fn a_workflow_is_handed_exactly_what_it_destructures(tc: TestCase) {
+    let kinds = vec![
+        EffectKind::Attest,
+        EffectKind::Await,
+        EffectKind::File,
+        EffectKind::Ask,
+        EffectKind::Push,
+    ];
+    // Ending in a digit, so that no name is one of Fennel's special forms.
+    let name = || gs::from_regex("[a-z][a-z-]{0,5}[0-9]").fullmatch(true);
+    let agents: BTreeMap<String, ()> = tc
+        .draw(gs::vecs(name()).max_size(3))
+        .into_iter()
+        .map(|agent| (agent, ()))
+        .collect();
+    let may = tc.draw(gs::vecs(gs::sampled_from(kinds.clone())).max_size(5));
+    let mut providers = tc.draw(gs::vecs(gs::sampled_from(vec!["ages", "github"])).max_size(2));
+    providers.sort();
+    providers.dedup();
+    let asked_agents: Vec<&String> = agents.keys().filter(|_| tc.draw(gs::booleans())).collect();
+    let effects: Vec<EffectKind> = kinds
+        .iter()
+        .copied()
+        .filter(|kind| may.contains(kind) && tc.draw(gs::booleans()))
+        .collect();
+
+    let lower = |kind: &EffectKind| format!("{kind:?}").to_lowercase();
+    let destructure = |names: Vec<String>| {
+        let names: Vec<String> = names.iter().map(|n| format!(": {n}")).collect();
+        format!("{{{}}}", names.join(" "))
+    };
+    let gather_names = providers
+        .iter()
+        .map(|p| p.to_string())
+        .chain(asked_agents.iter().map(|a| a.to_string()))
+        .collect();
+    let source = format!(
+        "(local declare {{:name :n :on :e :intent \"i\" :may [{}] :runs-per-hour 1 :agents {{{}}}}})
+(fn gather [{} event])
+(fn policy [facts {}])
+{{: declare : gather : policy}}",
+        may.iter().map(|k| format!(":{}", lower(k))).collect::<Vec<_>>().join(" "),
+        agents.keys().map(|a| format!("{} {{:prompt :p}}", quoted(a))).collect::<Vec<_>>().join(" "),
+        destructure(gather_names),
+        destructure(effects.iter().map(lower).collect()),
+    );
+    let workflow = load(&source).unwrap();
+
+    let in_may_order: Vec<EffectKind> = may
+        .iter()
+        .copied()
+        .filter(|kind| effects.contains(kind))
+        .fold(vec![], |mut seen, kind| {
+            if !seen.contains(&kind) {
+                seen.push(kind);
+            }
+            seen
+        });
+    assert_eq!(
+        workflow.capabilities(),
+        &Capabilities {
+            providers: providers.iter().map(|p| p.to_string()).collect(),
+            agents: asked_agents.into_iter().cloned().collect(),
+            effects: in_may_order,
+        }
+    );
+}
