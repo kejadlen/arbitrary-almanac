@@ -114,6 +114,7 @@ src/
 vendor/fennel.lua   the Fennel 1.6.1 compiler (MIT), built into the binary
 prompts/            agent prompts, built into the binary
 workflows/          .fnl workflows, bundled per deployment
+docs/               how this differs from Almanac and the Fennel spike
 ```
 
 ## Roadmap
@@ -139,4 +140,6 @@ A `Tracker` for Linear or Ranger fits anywhere: the trait is two methods.
 ## Status
 
 Planning. Nothing here runs yet. The case for this shape is in my
-[review of the Fennel spike](https://github.com/ivy/almanac/pull/5).
+[review of the Fennel spike](https://github.com/ivy/almanac/pull/5), and
+[docs/compared-to-almanac.md](docs/compared-to-almanac.md) tracks how the
+result differs from Almanac as the host grows.

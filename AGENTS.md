@@ -7,6 +7,7 @@ arbitrary-almanac is one Rust binary built on [Almanac](https://github.com/ivy/a
 - `just` is the gate. It runs `cargo fmt`, Clippy with warnings denied, and the tests, and it fails below 100% line coverage of the library. `just mutants` runs mutation testing. CI runs both, so a change is not done until both pass.
 - Domain logic lives in the library under `src/`. The binary, `src/bin/arbitrary-almanac/main.rs`, only parses arguments, calls the library, and renders output.
 - Library errors are variants of the `thiserror` and `miette::Diagnostic` enum in `src/error.rs`.
+- `docs/compared-to-almanac.md` explains how this host differs from Almanac and the Fennel spike. A change to `src/host/` or `src/catalog.rs` that moves one of its rows updates the page in the same commit.
 
 ## Working with upstream Almanac
 
