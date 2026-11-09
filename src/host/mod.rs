@@ -5,36 +5,63 @@
 //! to produce it.
 
 mod capabilities;
+mod compile;
 mod declaration;
 mod fennel;
 mod form;
+mod gather;
+mod sandbox;
 
 pub use capabilities::Capabilities;
 pub use declaration::{Agent, Declaration};
+pub use gather::{Call, Dispatch};
 
 use crate::{Catalog, Error};
 use fennel::{Fennel, Source};
 use form::Form;
+use sandbox::Sandbox;
+use serde_json::Value as Data;
 
 /// A workflow that has been read and checked, but not run.
 #[derive(Debug)]
 pub struct Workflow {
+    name: String,
     declaration: Declaration,
     capabilities: Capabilities,
+    lua: String,
 }
 
 impl Workflow {
     /// Reads a workflow from its source. `name` labels errors, usually the file name.
     pub fn load(catalog: &Catalog, name: &str, source: &str) -> Result<Self, Error> {
         let source = Source::new(name, source);
-        let forms = Fennel::new()?.parse(&source)?;
+        let fennel = Fennel::new()?;
+        let forms = fennel.parse(&source)?;
         check_exports(&source, forms.last())?;
         let declaration = read_declaration(&source, &forms)?;
         let capabilities = capabilities::read(catalog, &declaration, &source, &forms)?;
+        let lua = compile::compile(&fennel, &source, &forms)?;
         Ok(Self {
+            name: name.to_string(),
             declaration,
             capabilities,
+            lua,
         })
+    }
+
+    /// Runs `gather` on `event` in a fresh sandbox, handing it only the providers and agents it
+    /// asked for, and returns its facts.
+    pub async fn gather(&self, event: &Data, dispatch: &mut impl Dispatch) -> Result<Data, Error> {
+        let sandbox = Sandbox::new()?;
+        let exports = sandbox.exports(&self.name, &self.lua)?;
+        let capabilities = &self.capabilities;
+        let granted: Vec<&str> = capabilities
+            .providers
+            .iter()
+            .chain(&capabilities.agents)
+            .map(String::as_str)
+            .collect();
+        gather::run(&sandbox, &exports, &granted, event, dispatch).await
     }
 
     pub fn declaration(&self) -> &Declaration {
@@ -106,5 +133,7 @@ fn local_named<'a>(form: &'a Form, name: &str) -> Option<&'a Form> {
     }
 }
 
+#[cfg(test)]
+mod gather_tests;
 #[cfg(test)]
 mod tests;

@@ -56,8 +56,6 @@ fn reads_a_declaration_without_running_anything() {
 
 (fn policy [facts {}] (error "policy must not run at load"))
 
-(error "the top level must not run at load")
-
 {: declare : gather : policy}
 "#;
     let workflow = load(source).unwrap();
@@ -167,17 +165,32 @@ fn a_workflow_declares_itself_exactly_once() {
 }
 
 #[test]
-fn other_top_level_forms_are_not_mistaken_for_the_declaration() {
+fn other_locals_are_not_mistaken_for_the_declaration() {
     let source = r#"
 (local declare {:name :n :on :e :intent "i" :may [] :runs-per-hour 1})
-(var declare {})
-(local)
-:stray
+(local declared {})
+(fn declare-again [] {})
 (fn gather [{} event])
 (fn policy [facts {}])
 {: declare : gather : policy}
 "#;
     assert!(load(source).is_ok());
+}
+
+#[test]
+fn the_top_level_holds_only_locals_and_functions() {
+    let cases = [
+        (":stray", None),
+        ("(var x 1)", Some("(var x 1)")),
+        ("(print :hello)", Some("(print :hello)")),
+        ("(macro twice [x] x)", Some("(macro twice [x] x)")),
+    ];
+    for (form, label) in cases {
+        let source = ending_with(MINIMAL, &format!("{form}\n{{: declare : gather : policy}}"));
+        let err = load(&source).unwrap_err();
+        assert_eq!(code(&err), "arbitrary_almanac::top_level", "{form}");
+        assert_eq!(labelled(&err, &source).as_deref(), label, "{form}");
+    }
 }
 
 #[test]
