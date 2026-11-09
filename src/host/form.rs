@@ -71,13 +71,7 @@ impl FromLua for Form {
             Value::Number(n) => return Ok(Form::Number(n)),
             Value::String(s) => return Ok(Form::Str(s.to_str()?.to_string())),
             Value::Table(table) => table,
-            other => {
-                return Err(mlua::Error::FromLuaConversionError {
-                    from: other.type_name(),
-                    to: "Form".to_string(),
-                    message: None,
-                });
-            }
+            other => unreachable!("Fennel's parser makes no {}", other.type_name()),
         };
         let fennel: Table = lua.named_registry_value(FENNEL)?;
         let is = |predicate: &str| -> mlua::Result<bool> {

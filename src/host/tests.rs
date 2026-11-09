@@ -1,6 +1,9 @@
 use super::*;
 use almanac::effect::EffectKind;
-use miette::{Diagnostic as _, SourceSpan};
+use hegel::TestCase;
+use hegel::generators::{self as gs, Generator as _};
+use miette::Diagnostic as _;
+use std::collections::BTreeMap;
 
 /// The smallest declaration a workflow can make.
 const MINIMAL: &str = r#"{:name :n :on :e :intent "i" :may [] :runs-per-hour 1}"#;
@@ -95,21 +98,6 @@ fn a_parse_error_points_at_where_it_happened() {
     assert!(err.to_string().contains("Parse error"), "{err}");
     let label = err.labels().unwrap().next().unwrap();
     assert_eq!(label.offset(), source.len());
-}
-
-#[test]
-fn the_offset_of_an_error_is_found_on_its_line() {
-    let source = Source::new("w.fnl", "ab\ncdef\n");
-
-    let at = |message: &str| source.offset_of(message).map(|s| s.offset());
-    assert_eq!(at("w.fnl:1:1: Parse error"), Some(1));
-    assert_eq!(at("w.fnl:2:2: Parse error"), Some(5));
-    assert_eq!(at("w.fnl:9:9: Parse error"), Some(8));
-    assert_eq!(at("x.fnl:1:1: Parse error"), None);
-    assert_eq!(at("w.fnl;1:1: Parse error"), None);
-    assert_eq!(at("w.fnl:a:1: Parse error"), None);
-    assert_eq!(at("w.fnl:1:a: Parse error"), None);
-    assert_eq!(at("w.fnl:1"), None);
 }
 
 #[test]
@@ -229,7 +217,7 @@ fn a_declaration_that_names_or_calls_anything_is_refused() {
 fn a_declaration_must_have_the_right_shape() {
     let cases = [
         (
-            r#"{:name :n :on :e :intent "i" :may [] :runs-per-hour 1 :typo 1}"#,
+            r#"{:name :n :on :e :intent "i" :may [] :runs-per-hour 1 :typo true}"#,
             "unknown field `typo`",
         ),
         (
@@ -239,6 +227,30 @@ fn a_declaration_must_have_the_right_shape() {
         (
             r#"{:name :n :on :e :intent "i" :may [:merge] :runs-per-hour 1}"#,
             "unknown variant `Merge`",
+        ),
+        (
+            r#"{:name :n :on :e :intent "i" :may [:Attest] :runs-per-hour 1}"#,
+            "invalid value: string \"Attest\", expected a lowercase effect, such as :attest",
+        ),
+        (
+            r#"{:name :n :on :e :intent "i" :may [""] :runs-per-hour 1}"#,
+            "invalid value: string \"\", expected a lowercase effect, such as :attest",
+        ),
+        (
+            r#"{:name :n :on :e :intent "i" :may :attest :runs-per-hour 1}"#,
+            "invalid type: string \"attest\", expected a sequence",
+        ),
+        (
+            r#"{:name :n :on :e :intent "i" :may [] :runs-per-hour 1.5}"#,
+            "invalid type: floating point `1.5`, expected u32",
+        ),
+        (
+            r#"{:name :n :on :e :intent "i" :may [] :runs-per-hour 1 1 true}"#,
+            "unknown field `1`",
+        ),
+        (
+            r#"{:name :n :on :e :intent "i" :may [] :runs-per-hour 1 [:k] true}"#,
+            "unknown field `[\"k\"]`",
         ),
         (
             r#"{:name :n :on :e :intent "i" :may [] :runs-per-hour 1
@@ -264,63 +276,100 @@ fn a_declaration_must_be_a_table() {
 }
 
 #[test]
-fn spans_need_both_ends() {
-    let lua = mlua::Lua::new();
-    let fennel = lua
-        .load("return {['ast-source'] = function(t) return getmetatable(t) end}")
-        .eval::<mlua::Table>()
-        .unwrap();
-    let table = |pairs: &[(&str, i64)]| {
-        let t = lua.create_table().unwrap();
-        let mt = lua.create_table().unwrap();
-        for (k, v) in pairs {
-            mt.set(*k, *v).unwrap();
-        }
-        t.set_metatable(Some(mt)).unwrap();
-        t
+fn every_effect_is_almanacs_own() {
+    let source = declaring(
+        r#"{:name :n :on :e :intent "i" :may [:attest :await :file :ask :push] :runs-per-hour 1}"#,
+    );
+    let workflow = load(&source).unwrap();
+    assert_eq!(
+        workflow.declaration().may,
+        [
+            EffectKind::Attest,
+            EffectKind::Await,
+            EffectKind::File,
+            EffectKind::Ask,
+            EffectKind::Push,
+        ]
+    );
+}
+
+/// A Fennel string literal for any text.
+fn quoted(text: &str) -> String {
+    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// `declaration` written as the Fennel a workflow would declare it with.
+fn fennel(declaration: &Declaration) -> String {
+    let strings = |items: &[String]| {
+        items
+            .iter()
+            .map(|s| quoted(s))
+            .collect::<Vec<_>>()
+            .join(" ")
     };
-    let span = |pairs: &[(&str, i64)]| form::span(&fennel, &table(pairs));
-
-    assert_eq!(form::span(&lua.create_table().unwrap(), &table(&[])), None);
-    assert_eq!(form::span(&fennel, &lua.create_table().unwrap()), None);
-    assert_eq!(span(&[("byteend", 3)]), None);
-    assert_eq!(span(&[("bytestart", 1)]), None);
-    assert_eq!(span(&[("bytestart", 5), ("byteend", 3)]), None);
-    assert_eq!(span(&[("bytestart", 0), ("byteend", 3)]), None);
-    assert_eq!(
-        span(&[("bytestart", 2), ("byteend", 3)]),
-        Some(SourceSpan::from((1, 2)))
-    );
+    let may: Vec<String> = declaration
+        .may
+        .iter()
+        .map(|kind| format!(":{}", format!("{kind:?}").to_lowercase()))
+        .collect();
+    let agents: Vec<String> = declaration
+        .agents
+        .iter()
+        .map(|(name, agent)| {
+            format!(
+                "{} {{:prompt {} :vars [{}]}}",
+                quoted(name),
+                quoted(&agent.prompt),
+                strings(&agent.vars)
+            )
+        })
+        .collect();
+    format!(
+        "{{:name {} :on {} :intent {} :may [{}] :runs-per-hour {} :agents {{{}}}}}",
+        quoted(&declaration.name),
+        quoted(&declaration.on),
+        quoted(&declaration.intent),
+        may.join(" "),
+        declaration.runs_per_hour,
+        agents.join(" ")
+    )
 }
 
-#[test]
-fn only_what_the_parser_makes_becomes_a_form() {
-    let lua = mlua::Lua::new();
-    let err = lua.unpack::<Form>(mlua::Value::Nil).unwrap_err();
-    assert!(err.to_string().contains("Form"), "{err}");
+#[hegel::composite]
+fn declarations(tc: &TestCase) -> Declaration {
+    let text = || gs::text().max_size(12);
+    let kinds = vec![
+        EffectKind::Attest,
+        EffectKind::Await,
+        EffectKind::File,
+        EffectKind::Ask,
+        EffectKind::Push,
+    ];
+    let agent = || {
+        hegel::tuples!(text(), gs::vecs(text()).max_size(3))
+            .map(|(prompt, vars)| Agent { prompt, vars })
+    };
+    Declaration {
+        name: tc.draw(text()),
+        on: tc.draw(text()),
+        intent: tc.draw(text()),
+        may: tc.draw(gs::vecs(gs::sampled_from(kinds)).max_size(5)),
+        runs_per_hour: tc.draw(gs::integers::<u32>()),
+        agents: tc
+            .draw(gs::vecs(hegel::tuples!(text(), agent())).max_size(3))
+            .into_iter()
+            .collect::<BTreeMap<_, _>>(),
+    }
 }
 
-#[test]
-fn forms_read_as_data() {
-    let source = r#"
-(local declare {:name :n :on :e :intent "i" :may [] :runs-per-hour 1})
-(local other {1 :one [:k] :seq 2.5 :float false :no})
-(fn gather [{} event])
-(fn policy [facts {}])
-{: declare : gather : policy}
-"#;
-    load(source).unwrap();
-    let forms = Fennel::new()
-        .unwrap()
-        .parse(&Source::new("w.fnl", source))
-        .unwrap();
-    let other = local_named(&forms[1], "other").unwrap();
-    let data = other.to_data().unwrap();
+#[hegel::test]
+fn any_declaration_reads_back_as_written(tc: TestCase) {
+    let declaration = tc.draw(declarations());
+    let workflow = load(&declaring(&fennel(&declaration))).unwrap();
+    assert_eq!(workflow.declaration(), &declaration);
+}
 
-    assert_eq!(
-        data,
-        serde_json::json!({"1": "one", "[\"k\"]": "seq", "2.5": "float", "false": "no"})
-    );
-    assert_eq!(Form::Str("x".into()).span(), None);
-    assert_eq!(Form::Bool(true).symbol(), None);
+#[hegel::test]
+fn any_text_loads_or_is_refused_without_panicking(tc: TestCase) {
+    let _ = load(&tc.draw(gs::text()));
 }

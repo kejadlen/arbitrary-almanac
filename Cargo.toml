@@ -23,7 +23,7 @@ tracing-subscriber = { version = "*", features = ["env-filter"] }
 
 [dev-dependencies]
 assert_cmd = "*"
-hegeltest = "*"
+hegeltest = { version = "*", default-features = false, features = ["static-engine"] }
 predicates = "*"
 tempfile = "*"
 
