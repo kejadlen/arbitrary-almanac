@@ -1,5 +1,5 @@
 use super::*;
-use miette::Diagnostic as _;
+use miette::{Diagnostic as _, SourceSpan};
 
 const WORKFLOW: &str = r#"
 (local declare
@@ -165,6 +165,7 @@ fn a_declaration_that_names_or_calls_anything_is_refused() {
         (":runs-per-hour 30", ":runs-per-hour (* 3 10)", "(* 3 10)"),
         (":vars [:repo]", ":vars [repo]", "repo"),
         (":vars [:repo]", ":vars [:repo nil]", "nil"),
+        (":vars [:repo]", ":vars [...]", "..."),
         (":fixer {", "fixer {", "fixer"),
     ];
     for (from, to, label) in cases {
@@ -223,8 +224,11 @@ fn a_declaration_may_be_a_bare_literal() {
 
 #[test]
 fn spans_need_both_ends() {
-    let fennel = Fennel::new().unwrap();
-    let lua = fennel.lua();
+    let lua = mlua::Lua::new();
+    let fennel = lua
+        .load("return {['ast-source'] = function(t) return getmetatable(t) end}")
+        .eval::<mlua::Table>()
+        .unwrap();
     let table = |pairs: &[(&str, i64)]| {
         let t = lua.create_table().unwrap();
         let mt = lua.create_table().unwrap();
@@ -232,22 +236,47 @@ fn spans_need_both_ends() {
             mt.set(*k, *v).unwrap();
         }
         t.set_metatable(Some(mt)).unwrap();
-        Value::Table(t)
+        t
     };
+    let span = |pairs: &[(&str, i64)]| form::span(&fennel, &table(pairs));
 
-    assert_eq!(fennel.span(&Value::Integer(1)), None);
-    assert_eq!(fennel.span(&table(&[("byteend", 3)])), None);
-    assert_eq!(fennel.span(&table(&[("bytestart", 1)])), None);
+    assert_eq!(form::span(&lua.create_table().unwrap(), &table(&[])), None);
+    assert_eq!(form::span(&fennel, &lua.create_table().unwrap()), None);
+    assert_eq!(span(&[("byteend", 3)]), None);
+    assert_eq!(span(&[("bytestart", 1)]), None);
+    assert_eq!(span(&[("bytestart", 5), ("byteend", 3)]), None);
+    assert_eq!(span(&[("bytestart", 0), ("byteend", 3)]), None);
     assert_eq!(
-        fennel.span(&table(&[("bytestart", 5), ("byteend", 3)])),
-        None
-    );
-    assert_eq!(
-        fennel.span(&table(&[("bytestart", 0), ("byteend", 3)])),
-        None
-    );
-    assert_eq!(
-        fennel.span(&table(&[("bytestart", 2), ("byteend", 3)])),
+        span(&[("bytestart", 2), ("byteend", 3)]),
         Some(SourceSpan::from((1, 2)))
     );
+}
+
+#[test]
+fn only_what_the_parser_makes_becomes_a_form() {
+    let lua = mlua::Lua::new();
+    let err = lua.unpack::<Form>(mlua::Value::Nil).unwrap_err();
+    assert!(err.to_string().contains("Form"), "{err}");
+}
+
+#[test]
+fn forms_read_as_data() {
+    let source = r#"(local declare {:name :x :on :e :intent "i" :may [] :runs-per-hour 1
+                                    :agents {}})
+                    (local other {1 :one [:k] :seq 2.5 :float false :no})
+                    {: declare : gather : policy}"#;
+    load(source).unwrap();
+    let forms = Fennel::new()
+        .unwrap()
+        .parse(&Source::new("w.fnl", source))
+        .unwrap();
+    let other = local_named(&forms[1], "other").unwrap();
+    let data = other.to_data().unwrap();
+
+    assert_eq!(
+        data,
+        serde_json::json!({"1": "one", "[\"k\"]": "seq", "2.5": "float", "false": "no"})
+    );
+    assert_eq!(Form::Str("x".into()).span(), None);
+    assert_eq!(Form::Bool(true).symbol(), None);
 }

@@ -6,14 +6,13 @@
 
 mod declaration;
 mod fennel;
+mod form;
 
 pub use declaration::{Agent, Declaration, May};
 
 use crate::Error;
 use fennel::{Fennel, Source};
-#[cfg(test)]
-use miette::SourceSpan;
-use mlua::{LuaSerdeExt as _, Value};
+use form::Form;
 
 /// A workflow that has been read and checked, but not run.
 #[derive(Debug)]
@@ -24,11 +23,10 @@ pub struct Workflow {
 impl Workflow {
     /// Reads a workflow from its source. `name` labels errors, usually the file name.
     pub fn load(name: &str, source: &str) -> Result<Self, Error> {
-        let fennel = Fennel::new()?;
         let source = Source::new(name, source);
-        let forms = fennel.parse(&source)?;
-        check_exports(&fennel, &source, forms.last())?;
-        let declaration = read_declaration(&fennel, &source, &forms)?;
+        let forms = Fennel::new()?.parse(&source)?;
+        check_exports(&source, forms.last())?;
+        let declaration = read_declaration(&source, &forms)?;
         Ok(Self { declaration })
     }
 
@@ -41,75 +39,59 @@ const EXPORTS: [&str; 3] = ["declare", "gather", "policy"];
 
 /// The last form must be `{: declare : gather : policy}` and nothing else, so what a workflow
 /// hands the host is the same in every file.
-fn check_exports(fennel: &Fennel, source: &Source, last: Option<&Value>) -> Result<(), Error> {
-    let refused = || Error::Exports {
-        src: source.named(),
-        at: last.and_then(|form| fennel.span(form)),
+fn check_exports(source: &Source, last: Option<&Form>) -> Result<(), Error> {
+    let exports = |entries: &[(Form, Form)]| {
+        entries.len() == EXPORTS.len()
+            && EXPORTS.iter().all(|export| {
+                entries.iter().any(|(key, value)| {
+                    *key == Form::Str(export.to_string()) && value.symbol() == Some(export)
+                })
+            })
     };
-    let Some(last @ Value::Table(table)) = last else {
-        return Err(refused());
-    };
-    if fennel.is_list(last)? || table.pairs::<Value, Value>().count() != EXPORTS.len() {
-        return Err(refused());
+    match last {
+        Some(Form::Table(entries, _)) if exports(entries) => Ok(()),
+        _ => Err(Error::Exports {
+            src: source.named(),
+            at: last.and_then(Form::span),
+        }),
     }
-    for export in EXPORTS {
-        let value: Value = table.get(export)?;
-        if fennel.symbol(&value)?.as_deref() != Some(export) {
-            return Err(refused());
-        }
-    }
-    Ok(())
 }
 
 /// Finds the one top-level `(local declare ...)` and reads it as data.
-fn read_declaration(
-    fennel: &Fennel,
-    source: &Source,
-    forms: &[Value],
-) -> Result<Declaration, Error> {
-    let mut found = Vec::new();
-    for form in forms {
-        if let Some(value) = local_named(fennel, form, "declare")? {
-            found.push(value);
-        }
-    }
-    let [value] = found.as_slice() else {
+fn read_declaration(source: &Source, forms: &[Form]) -> Result<Declaration, Error> {
+    let found: Vec<&Form> = forms
+        .iter()
+        .filter_map(|f| local_named(f, "declare"))
+        .collect();
+    let [form] = found.as_slice() else {
         return Err(Error::Undeclared {
             src: source.named(),
         });
     };
-    if let Some(bad) = fennel.first_non_literal(value)? {
-        return Err(Error::NotLiteral {
-            src: source.named(),
-            at: fennel.span(&bad),
-        });
-    }
-    fennel
-        .lua()
-        .from_value(value.clone())
-        .map_err(|e| Error::Declaration {
-            message: e.to_string(),
-            src: source.named(),
-            at: fennel.span(value),
-        })
+    let data = form.to_data().map_err(|bad| Error::NotLiteral {
+        src: source.named(),
+        at: bad.span(),
+    })?;
+    serde_json::from_value(data).map_err(|e| Error::Declaration {
+        message: e.to_string(),
+        src: source.named(),
+        at: form.span(),
+    })
 }
 
 /// The value of `(local <name> value)`, if `form` is that.
-fn local_named(fennel: &Fennel, form: &Value, name: &str) -> Result<Option<Value>, Error> {
-    let Value::Table(list) = form else {
-        return Ok(None);
-    };
-    if !fennel.is_list(form)? {
-        return Ok(None);
+fn local_named<'a>(form: &'a Form, name: &str) -> Option<&'a Form> {
+    match form {
+        Form::List(items, _) => match items.as_slice() {
+            [head, target, value, ..]
+                if head.symbol() == Some("local") && target.symbol() == Some(name) =>
+            {
+                Some(value)
+            }
+            _ => None,
+        },
+        _ => None,
     }
-    let head: Value = list.get(1)?;
-    let target: Value = list.get(2)?;
-    if fennel.symbol(&head)?.as_deref() == Some("local")
-        && fennel.symbol(&target)?.as_deref() == Some(name)
-    {
-        return Ok(Some(list.get(3)?));
-    }
-    Ok(None)
 }
 
 #[cfg(test)]
