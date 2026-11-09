@@ -11,8 +11,8 @@ use super::taint;
 use crate::Error;
 use mlua::prelude::LuaThreadStatus as ThreadStatus;
 use mlua::{
-    IntoLuaMulti as _, LuaSerdeExt as _, MetaMethod, MultiValue, Table, UserData, UserDataMethods,
-    Value, Variadic,
+    IntoLuaMulti as _, Lua, LuaSerdeExt as _, MetaMethod, MultiValue, Table, UserData,
+    UserDataMethods, Value, Variadic,
 };
 use serde_json::Value as Data;
 use std::future::Future;
@@ -55,13 +55,9 @@ pub async fn run(
     dispatch: &mut impl Dispatch,
 ) -> Result<Data, Error> {
     let lua = sandbox.lua();
-    let thread = sandbox.thread(exports.get("gather")?)?;
-    let capabilities = lua.create_table()?;
-    for name in granted {
-        capabilities.set(*name, Capability(name.to_string()))?;
-    }
-    let mut input = (capabilities, taint::into_lua(lua, event)?).into_lua_multi(lua)?;
     let failed = |error| failed(source, error);
+    let thread = sandbox.thread(exports.get("gather").map_err(failed)?)?;
+    let mut input = handed(lua, granted, event).map_err(Error::Lua)?;
     loop {
         let output: MultiValue = thread.resume(input).map_err(failed)?;
         if thread.status() != ThreadStatus::Resumable {
@@ -70,7 +66,7 @@ pub async fn run(
         }
         // A script has no `coroutine`, so every yield is a capability's.
         let (capability, method, args): (String, String, Variadic<Value>) =
-            lua.unpack_multi(output)?;
+            lua.unpack_multi(output).map_err(Error::Lua)?;
         let args = args
             .into_iter()
             .map(|arg| lua.from_value(arg))
@@ -87,10 +83,22 @@ pub async fn run(
             src: source.named(),
             at: None,
         })?;
-        input = taint::into_lua(lua, &answer)?.into_lua_multi(lua)?;
+        input = taint::into_lua(lua, &answer)
+            .and_then(|answer| answer.into_lua_multi(lua))
+            .map_err(Error::Lua)?;
     }
 }
 
+/// What `gather` is called with: a table of its capabilities, and the event.
+fn handed(lua: &Lua, granted: &[&str], event: &Data) -> mlua::Result<MultiValue> {
+    let capabilities = lua.create_table()?;
+    for name in granted {
+        capabilities.set(*name, Capability(name.to_string()))?;
+    }
+    (capabilities, taint::into_lua(lua, event)?).into_lua_multi(lua)
+}
+
+/// The workflow failed, as opposed to the host, whose failures are [`Error::Lua`].
 pub fn failed(source: &Source, error: mlua::Error) -> Error {
     let (message, at) = source.located(&error);
     Error::Run {
