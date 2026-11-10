@@ -244,3 +244,103 @@ async fn the_fixer_runs_the_renovate_almanacs_prompt() {
         "{prompts:?}"
     );
 }
+
+/// The shipped build_failures workflow.
+fn build_failures() -> Registration {
+    let source = include_str!("../workflows/build_failures.fnl");
+    let workflow = Workflow::load(&Catalog::shipped(), "build_failures.fnl", source).unwrap();
+    Registration::new(workflow)
+}
+
+/// A forge with a Renovate pull request on `renovate/x` whose build failed, and its head.
+async fn red_build() -> (SimForge, String) {
+    let forge = SimForge::start().await;
+    forge.add_repo(simforge::Repo::public("o/r"));
+    let number = forge.add_pull("o/r", simforge::Pull::renovate("renovate/x", "Update x"));
+    let sha = forge.pull("o/r", number).head_sha;
+    forge.add_suite(
+        "o/r",
+        Suite::finished(&sha, "renovate/x", "failure", "error[E0425]"),
+    );
+    (forge, sha)
+}
+
+/// Every effect the one run of build_failures decided, as Almanac stores them.
+async fn decided(providers: Providers, sha: &str) -> Vec<Data> {
+    let runtime = Runtime::new(vec![Box::new(build_failures())], providers)
+        .with_store(Arc::new(MemoryStore::default()));
+    let envelope = Envelope {
+        source: "github".into(),
+        delivery_id: "d1".into(),
+        kind: "github.check_suite.completed".into(),
+        depth: 0,
+        origin: Origin::Webhook,
+        payload: suite(sha),
+    };
+    runtime.ingest(envelope).await.unwrap();
+    let outcomes = runtime.drain().await.unwrap();
+    let [Outcome::Ran { effects, .. }] = outcomes.as_slice() else {
+        unreachable!("build_failures should run once: {outcomes:?}")
+    };
+    effects
+        .iter()
+        .map(|e| serde_json::to_value(almanac::effect::Planned::from(e)).unwrap())
+        .collect()
+}
+
+fn kinds(effects: &[Data]) -> Vec<String> {
+    let kind = |effect: &Data| effect.as_object().and_then(|o| o.keys().next().cloned());
+    effects.iter().filter_map(kind).collect()
+}
+
+#[tokio::test]
+async fn build_failures_repairs_a_cooled_update_and_pushes_its_patch() {
+    let (forge, sha) = red_build().await;
+    let patch = r#"{"changes": [{"Write": {"path": "src/lib.rs", "content": "aGk=",
+                    "executable": false}}], "diff": "+hi"}"#;
+    let harness = ScriptedHarness::replying(patch);
+    let providers = providers(&forge, days_ago(10)).harness(harness.clone());
+    let effects = decided(providers, &sha).await;
+    assert_eq!(kinds(&effects), ["Push"]);
+    let push = &effects[0]["Push"];
+    assert_eq!(push["branch"], json!("renovate/x"));
+    assert_eq!(push["hold"], json!("almanac/trust"));
+    assert_eq!(push["base"], json!(sha));
+    let inputs = harness.inputs.lock().unwrap().clone();
+    assert_eq!(
+        inputs,
+        vec![json!({"logs": {"$untrusted": "error[E0425]\n"},
+                    "$checkout": {"repo": "o/r", "sha": sha}})]
+    );
+}
+
+#[tokio::test]
+async fn build_failures_waits_asks_or_stops_when_it_cannot_repair() {
+    let empty = r#"{"changes": [], "diff": ""}"#;
+    let denied = r#"{"changes": [{"Delete": {"path": ".github/workflows/ci.yml"}}], "diff": ""}"#;
+    let cases = [
+        (days_ago(0), empty, vec!["Await"], 0),
+        (Published::Unknown, empty, vec!["Ask"], 0),
+        (days_ago(10), empty, vec!["Attest", "Ask"], 1),
+        (days_ago(10), denied, vec!["Attest", "Ask"], 1),
+    ];
+    for (published, reply, expected, calls) in cases {
+        let (forge, sha) = red_build().await;
+        let harness = ScriptedHarness::replying(reply);
+        let providers = providers(&forge, published).harness(harness.clone());
+        let effects = decided(providers, &sha).await;
+        assert_eq!(kinds(&effects), expected, "{reply}: {effects:?}");
+        assert_eq!(harness.calls(), calls, "{reply}");
+    }
+}
+
+#[tokio::test]
+async fn build_failures_leaves_a_build_alone_unless_it_is_renovates_and_red() {
+    let forge = SimForge::start().await;
+    forge.add_repo(simforge::Repo::public("o/r"));
+    let number = forge.add_pull("o/r", simforge::Pull::renovate("renovate/x", "Update x"));
+    let sha = forge.pull("o/r", number).head_sha;
+    forge.add_suite("o/r", Suite::finished(&sha, "renovate/x", "success", ""));
+    let effects = decided(providers(&forge, days_ago(10)), &sha).await;
+    assert_eq!(effects, Vec::<Data>::new());
+}

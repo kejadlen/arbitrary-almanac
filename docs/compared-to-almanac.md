@@ -117,8 +117,12 @@ A fixer reads an update only after a cooldown read in the same run has
 passed: the cooldown's proof is Almanac's `Cooled`, held in Rust beside the
 run and never handed to the script, so a script can neither forge nor keep
 it. The fixer's patch is also a handle, and `(push ...)` checks it against
-Almanac's default patch policy where it is made, so a refused patch ends
-the run with its reason. A model that can veto but never approve has nothing to
+Almanac's default patch policy where it is made. A refused patch makes
+`(push ...)` answer `nil` and the reason, such as `:empty` or `:denied`,
+as `io.open` does, so a policy decides what a refusal means: the shipped
+`build_failures.fnl` asks a person. Two reads reach the run itself:
+`run.attempts` counts the patches a key has had recently, and `run.hold`
+posts the renovate almanac's pending status before an agent starts. A model that can veto but never approve has nothing to
 compare against here yet, because no workflow asks a classifier.
 
 ## Trusted code
@@ -130,9 +134,9 @@ counts below exclude comments and blank lines:
 |---|---|
 | Almanac | 749 lines, `taint.rs` and `crates/macros` |
 | Spike | 1,931 lines of Rust and 365 of Fennel and Lua |
-| arbitrary-almanac | 2,020 lines of Rust, beside the renovate almanac it reads through |
+| arbitrary-almanac | 2,056 lines of Rust, beside the renovate almanac it reads through |
 
-This repository's tests are 1,889 lines beside that. The comparison
+This repository's tests are 1,997 lines beside that. The comparison
 favours Almanac, which puts the boundary in the type system, and it is
 the price of letting the operator never touch Rust.
 

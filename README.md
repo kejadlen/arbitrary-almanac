@@ -131,8 +131,10 @@ docs/               how this differs from Almanac and the Fennel spike
 
 1. **Run the spike's workflow from here.** Depend on Almanac by git, promote
    the spike's host, and run `build_failures.fnl` against GitHub in a dry run.
-   No changes to Almanac. Fix `read-logs` on the way, since a bare `case`
-   pattern binds `false` from a passing job.
+   No changes to Almanac. `workflows/build_failures.fnl` is that workflow.
+   Reading logs moved into the catalog's `github.logs`, in Rust, so the
+   spike's `read-logs` bug, a bare `case` pattern binding `false` from a
+   passing job, has nowhere to live.
 2. **Capabilities and the bundle.** Hand providers and effects in as
    arguments, retire the tree-walking analyzer, and add `build`.
 3. **Quire as a source.** Quire already posts a `PushEvent` to `quire-ci`. A
