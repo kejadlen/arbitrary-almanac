@@ -37,7 +37,8 @@ workflow lives and who enforces its rules:
 | Events | Generated types, projected by hand per almanac | 117 lines of `github.rs` per almanac | Almanac's generated types, serialized as they are |
 
 The bundling step is planned and not built. Until it exists, the
-deployment row describes the intent.
+deployment row describes the intent, and the binary loads a directory of
+`.fnl` files at startup, which is the spike's shape.
 
 ## Where this repository holds more tightly than Almanac
 
@@ -122,9 +123,9 @@ counts below exclude comments and blank lines:
 |---|---|
 | Almanac | 749 lines, `taint.rs` and `crates/macros` |
 | Spike | 1,931 lines of Rust and 365 of Fennel and Lua |
-| arbitrary-almanac | 1,814 lines of Rust, with reads unbuilt |
+| arbitrary-almanac | 1,872 lines of Rust, with reads unbuilt |
 
-This repository's tests are 1,646 lines beside that. The comparison
+This repository's tests are 1,666 lines beside that. The comparison
 favours Almanac, which puts the boundary in the type system, and it is
 the price of letting the operator never touch Rust.
 

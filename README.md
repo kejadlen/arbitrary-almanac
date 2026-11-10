@@ -81,6 +81,15 @@ ALMANAC_MODE=live ./almanac run                 # live is deliberate, set in the
 Everything after `build` is Almanac's own CLI, unchanged. `build` is a verb on
 the same binary.
 
+`build` is not built yet. Until it is, the binary loads every `.fnl` file in
+`$ARBITRARY_ALMANAC_WORKFLOWS` (default `workflows`) at startup, refuses to
+start if any fails to load, and hands the rest of its arguments to Almanac:
+
+```
+arbitrary-almanac synth
+arbitrary-almanac simulate github.check_suite.completed suite.json --dry-run
+```
+
 ## Design principles
 
 arbitrary-almanac keeps Almanac's principles except the second, which it
