@@ -16,6 +16,7 @@ use super::sandbox::Sandbox;
 use super::taint;
 use crate::Error;
 use almanac::effect::{AttestState, EffectKind};
+use almanac::patch::{Checked, DEFAULT_POLICY, Patch};
 use almanac::taint::{Sha, Slug, Untrusted};
 use mlua::{AnyUserData, Lua, LuaSerdeExt as _, Table, UserData, Value};
 use serde::Deserialize;
@@ -23,8 +24,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Value as Data;
 use std::collections::BTreeSet;
 
-/// An effect a policy decided on. `context` and `until` are string literals from the workflow's
-/// source, so the runtime can hold them for as long as it runs.
+/// An effect a policy decided on. `context`, `until`, `message`, and `hold` are string literals
+/// from the workflow's source, so the runtime can hold them for as long as it runs.
 /// It serializes as Almanac stores effects, with each body still `{"$untrusted": ...}`.
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -49,6 +50,22 @@ pub enum Decision {
         pull: Option<u64>,
         body: Untrusted<String>,
     },
+    Push {
+        repo: Slug,
+        pull: u64,
+        branch: Slug,
+        message: String,
+        hold: Option<String>,
+        #[serde(serialize_with = "checked")]
+        patch: Checked,
+    },
+}
+
+/// A checked patch as Almanac stores one: its base, and the patch still tainted.
+fn checked<S: serde::Serializer>(checked: &Checked, serializer: S) -> Result<S::Ok, S::Error> {
+    use serde::Serialize as _;
+    let patch = Untrusted::new(checked.patch().clone());
+    serde_json::json!({"base": checked.base(), "patch": patch}).serialize(serializer)
 }
 
 impl UserData for Decision {}
@@ -95,6 +112,19 @@ struct Ask {
     #[serde(default)]
     pull: Option<u64>,
     body: Body,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Push {
+    repo: Slug,
+    pull: u64,
+    branch: Slug,
+    message: String,
+    #[serde(default)]
+    hold: Option<String>,
+    base: Sha,
+    patch: Untrusted<Patch>,
 }
 
 /// Reads a constructor's argument, naming the constructor when it does not fit.
@@ -181,9 +211,30 @@ fn construct(
                 body: body.untrusted(),
             })
         }
-        EffectKind::Push => Err(mlua::Error::runtime(
-            "(push ...) needs a checked patch, which no agent can make yet",
-        )),
+        EffectKind::Push => {
+            let Push {
+                repo,
+                pull,
+                branch,
+                message,
+                hold,
+                base,
+                patch,
+            } = argument(lua, "push", value)?;
+            // A patch is checked where it is decided on, so a refusal ends the run with its reason.
+            let patch = DEFAULT_POLICY.check(&patch, &base).map_err(|rejection| {
+                mlua::Error::runtime(format!("(push ...) refused its patch: {rejection:?}"))
+            })?;
+            let hold = hold.map(|hold| literal(literals, "push", "hold", hold));
+            Ok(Decision::Push {
+                repo,
+                pull,
+                branch,
+                message: literal(literals, "push", "message", message)?,
+                hold: hold.transpose()?,
+                patch,
+            })
+        }
     }
 }
 

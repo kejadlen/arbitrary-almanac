@@ -49,7 +49,7 @@ The intended shape. The syntax is not final.
    :intent "Repair a Renovate update whose build fails"
    :may [:attest :ask :push]
    :runs-per-hour 30
-   :agents {:fixer {:prompt :fixer :vars [:repo]}}})
+   :agents {:fixer {:prompt :fix :vars [:repo]}}})
 
 (fn gather [{: github : ages : fixer} event]
   ...)
@@ -57,7 +57,8 @@ The intended shape. The syntax is not final.
 (fn policy [facts {: attest : ask : push}]
   (case facts
     {:kind :nothing} []
-    {:kind :repaired : patch} [(push patch)]
+    {:kind :repaired : repo : pull : branch : sha : patch}
+    [(push {: repo : pull : branch :base sha :message "Fix the build" : patch})]
     ...))
 
 {: declare : gather : policy}

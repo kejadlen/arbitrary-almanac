@@ -7,7 +7,8 @@
 use super::Workflow;
 use super::gather::{Call, Dispatch};
 use super::policy::Decision;
-use crate::catalog::Read;
+use crate::catalog::{Prompt, Read};
+use almanac::cooled::Cooled;
 use almanac::cx::{Cx, Halt, StepError};
 use almanac::effect::{Effect, EffectKind};
 use almanac::providers::Requirement;
@@ -17,7 +18,6 @@ use almanac::workflow::{Decided, Found, Identity, Registered, Scanner};
 use futures::future::BoxFuture;
 use serde_json::{Value as Data, json};
 use std::collections::BTreeMap;
-use std::future::Future;
 
 /// A loaded workflow with the names the runtime keeps for as long as the binary runs.
 pub struct Registration {
@@ -25,7 +25,8 @@ pub struct Registration {
     name: &'static str,
     intent: &'static str,
     may: &'static [EffectKind],
-    agents: Vec<&'static str>,
+    /// Each agent by its name, which Almanac wants as `&'static str`, with the prompt it runs.
+    agents: BTreeMap<&'static str, Prompt>,
     /// The workflow's string literals, which an effect's `&'static` names are drawn from.
     literals: BTreeMap<String, &'static str>,
 }
@@ -40,7 +41,11 @@ impl Registration {
             name: leak(&declaration.name),
             intent: leak(&declaration.intent),
             may: Box::leak(declaration.may.clone().into_boxed_slice()),
-            agents: declaration.agents.keys().map(|name| leak(name)).collect(),
+            agents: workflow
+                .agents
+                .iter()
+                .map(|(name, prompt)| (leak(name), prompt.clone()))
+                .collect(),
             literals: workflow
                 .literals
                 .iter()
@@ -91,6 +96,21 @@ impl Registration {
                 pull,
                 body,
             },
+            Decision::Push {
+                repo,
+                pull,
+                branch,
+                message,
+                hold,
+                patch,
+            } => Effect::Push {
+                repo,
+                pull,
+                branch,
+                message: literal(&message),
+                hold: hold.as_deref().map(literal),
+                patch,
+            },
         }
     }
 }
@@ -99,22 +119,45 @@ impl Registration {
 struct Recorded<'a> {
     cx: &'a Cx,
     reads: &'a [Read],
+    agents: &'a BTreeMap<&'static str, Prompt>,
+    /// Proof from a cooldown read in this run that the update has cooled.
+    cooled: Option<Cooled>,
 }
 
 impl Dispatch for Recorded<'_> {
-    fn call(&mut self, call: Call) -> impl Future<Output = Result<Data, String>> + Send {
+    async fn call(&mut self, call: Call) -> Result<Data, String> {
+        let Call {
+            capability,
+            method,
+            args,
+        } = call;
+        if let Some((agent, prompt)) = self.agents.get_key_value(capability.as_str()) {
+            if method != prompt.method {
+                return Err(format!(
+                    "{agent} has no method `{method}`, only `{}`",
+                    prompt.method
+                ));
+            }
+            let Ok([vars, input]) = <[Data; 2]>::try_from(args) else {
+                return Err(format!("({agent}.{method} vars input) takes two arguments"));
+            };
+            let cooled = self.cooled.as_ref();
+            let answer = prompt.invoke(self.cx, agent, vars, input, cooled).await;
+            return answer.map_err(|StepError(message)| message);
+        }
         let read = self
             .reads
             .iter()
-            .find(|read| read.provider() == call.capability && read.method() == call.method);
-        let missing = format!("{} has no read `{}`", call.capability, call.method);
-        let performed = read.map(|read| read.perform(self.cx, call.args));
-        async move {
-            match performed {
-                Some(performed) => performed.await.map_err(|StepError(message)| message),
-                None => Err(missing),
-            }
+            .find(|read| read.provider() == capability && read.method() == method);
+        let Some(read) = read else {
+            return Err(format!("{capability} has no read `{method}`"));
+        };
+        let answer = read.perform(self.cx, args).await;
+        let answer = answer.map_err(|StepError(message)| message)?;
+        if answer.cooled.is_some() {
+            self.cooled = answer.cooled;
         }
+        Ok(answer.data)
     }
 }
 
@@ -144,7 +187,7 @@ impl Registered for Registration {
     }
 
     fn agent_names(&self) -> Vec<&'static str> {
-        self.agents.clone()
+        self.agents.keys().copied().collect()
     }
 
     fn requirements(&self) -> Vec<Requirement> {
@@ -170,6 +213,8 @@ impl Registered for Registration {
             let mut recorded = Recorded {
                 cx,
                 reads: &self.workflow.reads,
+                agents: &self.agents,
+                cooled: None,
             };
             let failed = |error: crate::Error| StepError(error.to_string());
             let facts = self

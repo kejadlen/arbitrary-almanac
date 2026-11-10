@@ -3,7 +3,7 @@ use super::*;
 use miette::Diagnostic as _;
 use serde_json::{Value as Data, json};
 
-/// A workflow that may do anything but push, and whose policy is `policy`.
+/// A workflow that may make any effect, and whose policy is `policy`.
 fn deciding(policy: &str) -> Workflow {
     let source = format!(
         r#"(local declare {{:name :n :on :e :intent "i" :may [:attest :await :file :ask :push]
@@ -91,10 +91,6 @@ fn an_effect_almanac_would_refuse_is_refused_where_it_is_made() {
             "(ask ...) data did not match any variant",
         ),
         (
-            "(fn policy [facts {: push}] [(push {})])".to_string(),
-            "(push ...) needs a checked patch",
-        ),
-        (
             "(fn policy [facts {}] (error :no))".to_string(),
             "policy failed: w.fnl:4: no",
         ),
@@ -138,4 +134,82 @@ fn a_module_that_fails_while_loading_fails_the_policy() {
     let workflow = Workflow::load(&catalog(), "w.fnl", source).unwrap();
     let err = workflow.policy(&json!({})).unwrap_err();
     assert_eq!(err.to_string(), "policy failed: w.fnl:2: no limit");
+}
+
+/// A fixer's patch as a run's facts carry it: tainted, writing `path`.
+fn patched(path: &str) -> Data {
+    json!({
+        "repo": "o/r",
+        "sha": SHA,
+        "patch": {"$untrusted": {
+            "changes": [{"Write": {"path": path, "content": "aGk=", "executable": false}}],
+            "diff": "+hi",
+        }},
+    })
+}
+
+fn pushing(args: &str) -> String {
+    format!(
+        r#"(fn policy [facts {{: push}}]
+  (let [{{: repo : sha : patch}} facts]
+    [(push {{:repo repo :pull 3 :branch "renovate/x" :base sha {args}}})]))"#
+    )
+}
+
+#[test]
+fn a_policy_pushes_a_patch_the_patch_policy_accepts() {
+    let cases = [
+        (
+            pushing(r#":message "Fix the build" :hold "almanac/fix" : patch"#),
+            json!("almanac/fix"),
+        ),
+        (pushing(r#":message "Fix the build" : patch"#), json!(null)),
+    ];
+    for (policy, hold) in cases {
+        let decided = decide(&policy, patched("src/lib.rs")).unwrap();
+        assert_eq!(
+            decided,
+            json!([{"push": {
+                "repo": "o/r", "pull": 3, "branch": "renovate/x", "message": "Fix the build",
+                "hold": hold,
+                "patch": {"base": SHA, "patch": {"$untrusted": {
+                    "changes": [{"Write": {"path": "src/lib.rs", "content": "aGk=",
+                                           "executable": false}}],
+                    "diff": "+hi", "answer": null, "usage": null,
+                }}},
+            }}]),
+            "{policy}"
+        );
+    }
+}
+
+#[test]
+fn a_push_is_refused_where_it_is_made() {
+    let cases = [
+        (
+            pushing(r#":message "m" : patch"#),
+            patched(".github/workflows/ci.yml"),
+            "(push ...) refused its patch: Denied",
+        ),
+        (
+            pushing(r#":message "m" :patch {:changes [] :diff ""}"#),
+            patched("src/lib.rs"),
+            "(push ...) missing field `$untrusted`",
+        ),
+        (
+            pushing(r#":message (.. "m" "m") : patch"#),
+            patched("src/lib.rs"),
+            "(push ...) takes its message as a string literal",
+        ),
+        (
+            pushing(r#":message "m" :hold (.. "h" "h") : patch"#),
+            patched("src/lib.rs"),
+            "(push ...) takes its hold as a string literal",
+        ),
+    ];
+    for (policy, facts, message) in cases {
+        let err = decide(&policy, facts).unwrap_err();
+        assert_eq!(code(&err), "arbitrary_almanac::run", "{policy}");
+        assert!(err.to_string().contains(message), "{policy}: {err}");
+    }
 }

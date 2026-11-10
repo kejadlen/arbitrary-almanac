@@ -33,6 +33,24 @@ pub enum Error {
         src: Arc<NamedSource<String>>,
     },
 
+    #[error("agent `{agent}` runs `{prompt}`, but no prompt in this binary is called that")]
+    #[diagnostic(code(arbitrary_almanac::prompt))]
+    Prompt {
+        agent: String,
+        prompt: String,
+        #[source_code]
+        src: Arc<NamedSource<String>>,
+    },
+
+    #[error("agent `{agent}` must declare its prompt's variables, :vars {expected}")]
+    #[diagnostic(code(arbitrary_almanac::vars))]
+    Vars {
+        agent: String,
+        expected: String,
+        #[source_code]
+        src: Arc<NamedSource<String>>,
+    },
+
     #[error("{message}")]
     #[diagnostic(code(arbitrary_almanac::compile))]
     Compile {
