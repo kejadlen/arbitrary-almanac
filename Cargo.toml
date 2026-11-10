@@ -9,6 +9,7 @@ path = "src/bin/arbitrary-almanac/main.rs"
 
 [dependencies]
 almanac = { git = "https://github.com/ivy/almanac", branch = "alpha/main" }
+almanac-renovate = { git = "https://github.com/ivy/almanac", branch = "alpha/main" }
 clap = { version = "*", features = ["derive", "env"] }
 clap_complete = "*"
 fs-err = "*"
@@ -28,6 +29,7 @@ assert_cmd = "*"
 hegeltest = { version = "*", default-features = false, features = ["static-engine"] }
 jiff = "*"
 predicates = "*"
+simforge = { git = "https://github.com/ivy/almanac", branch = "alpha/main" }
 tempfile = "*"
 
 [lints.clippy]
