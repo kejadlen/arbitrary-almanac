@@ -10,6 +10,7 @@ mod declaration;
 mod fennel;
 mod form;
 mod gather;
+mod policy;
 mod registered;
 mod sandbox;
 mod taint;
@@ -17,6 +18,7 @@ mod taint;
 pub use capabilities::Capabilities;
 pub use declaration::{Agent, Declaration};
 pub use gather::{Call, Dispatch};
+pub use policy::Decision;
 pub use registered::Registration;
 
 use crate::catalog::{Event, Read};
@@ -25,6 +27,7 @@ use fennel::{Fennel, Source};
 use form::Form;
 use sandbox::Sandbox;
 use serde_json::Value as Data;
+use std::collections::BTreeSet;
 
 /// A workflow that has been read and checked, but not run.
 #[derive(Debug)]
@@ -34,6 +37,8 @@ pub struct Workflow {
     capabilities: Capabilities,
     lua: String,
     event: Event,
+    /// Every string literal in the source. An effect's names must be among them.
+    literals: BTreeSet<String>,
     /// Every read in the catalog. `gather` reaches only those of the providers it was handed.
     reads: Vec<Read>,
 }
@@ -61,6 +66,11 @@ impl Workflow {
             capabilities,
             lua,
             event,
+            literals: forms
+                .iter()
+                .flat_map(Form::strings)
+                .map(str::to_string)
+                .collect(),
             reads: catalog.reads.clone(),
         })
     }
@@ -68,11 +78,7 @@ impl Workflow {
     /// Runs `gather` on `event` in a fresh sandbox, handing it only the providers and agents it
     /// asked for, and returns its facts.
     pub async fn gather(&self, event: &Data, dispatch: &mut impl Dispatch) -> Result<Data, Error> {
-        let sandbox = Sandbox::new()?;
-        // The module's own locals run here too, so their failures are the run's.
-        let exports = sandbox
-            .exports(self.source.name(), &self.lua)
-            .map_err(|error| gather::failed(&self.source, error))?;
+        let (sandbox, exports) = self.sandbox("gather")?;
         let capabilities = &self.capabilities;
         let granted: Vec<&str> = capabilities
             .providers
@@ -81,6 +87,31 @@ impl Workflow {
             .map(String::as_str)
             .collect();
         gather::run(&sandbox, &self.source, &exports, &granted, event, dispatch).await
+    }
+
+    /// Runs `policy` on `facts` in a fresh sandbox, handing it only the constructors of the
+    /// effects it asked for, and returns what it decided.
+    pub fn policy(&self, facts: &Data) -> Result<Vec<Decision>, Error> {
+        let (sandbox, exports) = self.sandbox("policy")?;
+        let granted = &self.capabilities.effects;
+        policy::run(
+            &sandbox,
+            &self.source,
+            &exports,
+            granted,
+            &self.literals,
+            facts,
+        )
+    }
+
+    /// A fresh sandbox and the module's exports in it. The module's own locals run here too, so
+    /// their failures are the run's.
+    fn sandbox(&self, function: &'static str) -> Result<(Sandbox, mlua::Table), Error> {
+        let sandbox = Sandbox::new()?;
+        let exports = sandbox
+            .exports(self.source.name(), &self.lua)
+            .map_err(|error| gather::failed(function, &self.source, error))?;
+        Ok((sandbox, exports))
     }
 
     pub fn declaration(&self) -> &Declaration {
@@ -154,6 +185,8 @@ fn local_named<'a>(form: &'a Form, name: &str) -> Option<&'a Form> {
 
 #[cfg(test)]
 mod gather_tests;
+#[cfg(test)]
+mod policy_tests;
 #[cfg(test)]
 mod runtime_tests;
 #[cfg(test)]
