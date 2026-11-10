@@ -12,6 +12,7 @@
 pub mod catalog;
 mod error;
 pub mod host;
+mod renovate;
 
 pub use catalog::Catalog;
 pub use error::Error;

@@ -29,8 +29,8 @@ impl Catalog {
     pub fn shipped() -> Self {
         Self {
             events: vec![check_suite_completed()],
-            reads: vec![],
-            prompts: vec![],
+            reads: crate::renovate::reads(),
+            prompts: crate::renovate::prompts(),
         }
     }
 

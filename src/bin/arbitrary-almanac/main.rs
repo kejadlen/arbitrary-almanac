@@ -1,5 +1,3 @@
-use almanac::config::Config;
-use almanac::providers::Providers;
 use almanac::workflow::Registered;
 use arbitrary_almanac::Catalog;
 use arbitrary_almanac::host::{Registration, load_dir};
@@ -89,7 +87,7 @@ fn main() -> miette::Result<ExitCode> {
     Ok(almanac::main_with(
         "arbitrary-almanac",
         workflows,
-        |_: &Config| Providers::new(),
+        almanac_renovate::providers::all,
         &[],
     ))
 }
