@@ -3,7 +3,8 @@
 //! `policy` runs in a fresh [`Sandbox`] on the facts `gather` returned, handed a constructor for
 //! each effect it destructured and nothing else: no reads, no clock, no randomness. Each
 //! constructor checks its arguments and returns an opaque [`Decision`], so a policy cannot make an
-//! effect it was not handed or one Almanac would refuse.
+//! effect it was not handed or one Almanac would refuse. `push` answers `nil` and the reason, such
+//! as `:empty` or `:denied`, for a patch the patch policy refuses.
 //!
 //! Every Lua string is clean: text from outside reaches a script only as an opaque handle (see
 //! [`super::taint`]). So a string a policy builds may become a `Title`, and an untrusted handle may
@@ -16,7 +17,7 @@ use super::sandbox::Sandbox;
 use super::taint;
 use crate::Error;
 use almanac::effect::{AttestState, EffectKind};
-use almanac::patch::{Checked, DEFAULT_POLICY, Patch};
+use almanac::patch::{Checked, DEFAULT_POLICY, Patch, Rejection};
 use almanac::taint::{Sha, Slug, Untrusted};
 use mlua::{AnyUserData, Lua, LuaSerdeExt as _, Table, UserData, Value};
 use serde::Deserialize;
@@ -158,7 +159,7 @@ fn construct(
     kind: EffectKind,
     literals: &BTreeSet<String>,
     value: Value,
-) -> mlua::Result<Decision> {
+) -> mlua::Result<Result<Decision, Rejection>> {
     match kind {
         EffectKind::Attest => {
             let Attest {
@@ -172,18 +173,18 @@ fn construct(
                     "(attest ...) takes a state of :pending, :success, or :failure",
                 )
             })?;
-            Ok(Decision::Attest {
+            Ok(Ok(Decision::Attest {
                 context: literal(literals, "attest", "context", context)?,
                 state,
                 repo,
                 sha,
-            })
+            }))
         }
         EffectKind::Await => {
             let until: String = argument(lua, "await", value)?;
-            Ok(Decision::Await {
+            Ok(Ok(Decision::Await {
                 until: literal(literals, "await", "fact", until)?,
-            })
+            }))
         }
         EffectKind::File => {
             let File {
@@ -191,11 +192,11 @@ fn construct(
                 target,
                 body,
             } = argument(lua, "file", value)?;
-            Ok(Decision::File {
+            Ok(Ok(Decision::File {
                 title,
                 target,
                 body: body.untrusted(),
-            })
+            }))
         }
         EffectKind::Ask => {
             let Ask {
@@ -204,12 +205,12 @@ fn construct(
                 pull,
                 body,
             } = argument(lua, "ask", value)?;
-            Ok(Decision::Ask {
+            Ok(Ok(Decision::Ask {
                 question,
                 target,
                 pull,
                 body: body.untrusted(),
-            })
+            }))
         }
         EffectKind::Push => {
             let Push {
@@ -221,19 +222,21 @@ fn construct(
                 base,
                 patch,
             } = argument(lua, "push", value)?;
-            // A patch is checked where it is decided on, so a refusal ends the run with its reason.
-            let patch = DEFAULT_POLICY.check(&patch, &base).map_err(|rejection| {
-                mlua::Error::runtime(format!("(push ...) refused its patch: {rejection:?}"))
-            })?;
+            // A patch is checked where it is decided on, so a policy can decide what a refusal
+            // means, such as asking a person.
+            let patch = match DEFAULT_POLICY.check(&patch, &base) {
+                Ok(patch) => patch,
+                Err(rejection) => return Ok(Err(rejection)),
+            };
             let hold = hold.map(|hold| literal(literals, "push", "hold", hold));
-            Ok(Decision::Push {
+            Ok(Ok(Decision::Push {
                 repo,
                 pull,
                 branch,
                 message: literal(literals, "push", "message", message)?,
                 hold: hold.transpose()?,
                 patch,
-            })
+            }))
         }
     }
 }
@@ -251,8 +254,14 @@ pub fn run(
     for &kind in granted {
         let literals = literals.clone();
         let name = format!("{kind:?}").to_lowercase();
-        let constructor =
-            lua.create_function(move |lua, value: Value| construct(lua, kind, &literals, value))?;
+        // A constructor answers with its effect, or with `nil` and why it refused, as `io.open`
+        // does: only `push` refuses, for a patch the patch policy does not accept.
+        let constructor = lua.create_function(move |lua, value: Value| {
+            Ok(match construct(lua, kind, &literals, value)? {
+                Ok(decision) => (Some(decision), None),
+                Err(rejection) => (None, Some(format!("{rejection:?}").to_lowercase())),
+            })
+        })?;
         constructors.set(name, constructor)?;
     }
     let failed = |error| failed("policy", source, error);

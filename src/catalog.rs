@@ -5,7 +5,7 @@ use almanac::agent::{AgentSpec, Fixer, Quarantined, Template};
 use almanac::cooled::{Age, Cooled, Published};
 use almanac::cx::{Cx, Halt, Record, StepError};
 use almanac::patch::Patch;
-use almanac::taint::{Observed, Untrusted};
+use almanac::taint::{Observed, Sha, Slug, Untrusted};
 use almanac::wire::Malformed;
 use almanac::workflow::Subject;
 use futures::future::BoxFuture;
@@ -164,6 +164,42 @@ impl Read {
         }
     }
 
+    /// `(run.attempts)`: how many patches this run's key has had recently, as `{:used n :asked
+    /// bool}`, where `asked` says a person was already asked. Almanac records the count.
+    pub fn attempts(name: &'static str) -> Self {
+        Self {
+            name,
+            perform: Arc::new(move |cx, args| {
+                Box::pin(async move {
+                    let []: [Data; 0] = arguments(name, args)?;
+                    let attempts = cx.attempts().await?;
+                    Ok(Answer {
+                        data: json!({"used": attempts.used, "asked": attempts.asked}),
+                        cooled: None,
+                    })
+                })
+            }),
+        }
+    }
+
+    /// `(run.hold repo sha)`: a `pending` status under `context` on a commit now, before an agent
+    /// starts, so nothing merges while it works. Almanac posts it only in a live run.
+    pub fn hold(name: &'static str, context: &'static str) -> Self {
+        Self {
+            name,
+            perform: Arc::new(move |cx, args| {
+                Box::pin(async move {
+                    let (repo, sha): (Slug, Sha) = arguments(name, args)?;
+                    cx.hold(context, &repo, &sha).await?;
+                    Ok(Answer {
+                        data: Data::Null,
+                        cooled: None,
+                    })
+                })
+            }),
+        }
+    }
+
     pub fn provider(&self) -> &str {
         self.name
             .split_once('.')
@@ -261,6 +297,11 @@ impl Prompt {
     ) -> BoxFuture<'a, Result<Data, StepError>> {
         (self.invoke)(cx, agent, vars, input, cooled)
     }
+}
+
+/// A read's arguments, as the tuple it takes.
+pub(crate) fn arguments<T: DeserializeOwned>(read: &str, args: Vec<Data>) -> Result<T, StepError> {
+    serde_json::from_value(Data::from(args)).map_err(|e| StepError(format!("({read} ...) {e}")))
 }
 
 /// An agent's call fails only as a step: it never decides to stop.

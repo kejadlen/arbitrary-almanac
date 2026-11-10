@@ -5,18 +5,17 @@
 //! check suite or a pull request body means, and these reads only fetch what they need and hand
 //! the answer to a script.
 
-use crate::catalog::{Prompt, Read};
+use crate::catalog::{Prompt, Read, arguments};
 use almanac::agent::Template;
 use almanac::cooled::Published;
 use almanac::cx::{Cx, StepError};
 use almanac::taint::{Sha, Slug, Untrusted};
 use almanac_renovate::events::PATCH_TRAILER;
-use almanac_renovate::fleet::{Checks, checks_of, trust_pending};
+use almanac_renovate::fleet::{Checks, TRUST_CONTEXT, checks_of, trust_pending};
 use almanac_renovate::update::{Ages, PullText, update_of};
 use almanac_renovate::workflows::build_failures::{FixerPrompt, MIN_RELEASE_AGE, ScanTarget};
 use futures::future::BoxFuture;
 use github::client::GithubClient;
-use serde::de::DeserializeOwned;
 use serde_json::{Value as Data, json};
 
 /// The tail of a failed job's log that a fixer reads, where a build's error usually is.
@@ -27,16 +26,13 @@ pub fn reads() -> Vec<Read> {
         Read::of("github.pull", pull),
         Read::of("github.logs", logs),
         Read::cooldown("ages.cooled", MIN_RELEASE_AGE, published),
+        Read::attempts("run.attempts"),
+        Read::hold("run.hold", TRUST_CONTEXT),
     ]
 }
 
 pub fn prompts() -> Vec<Prompt> {
     vec![Prompt::fixer::<Fixer>("fixer")]
-}
-
-/// A read's arguments, as the tuple it takes.
-fn arguments<T: DeserializeOwned>(read: &str, args: Vec<Data>) -> Result<T, StepError> {
-    serde_json::from_value(Data::from(args)).map_err(|e| StepError(format!("({read} ...) {e}")))
 }
 
 almanac::observed! {

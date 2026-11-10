@@ -187,11 +187,6 @@ fn a_policy_pushes_a_patch_the_patch_policy_accepts() {
 fn a_push_is_refused_where_it_is_made() {
     let cases = [
         (
-            pushing(r#":message "m" : patch"#),
-            patched(".github/workflows/ci.yml"),
-            "(push ...) refused its patch: Denied",
-        ),
-        (
             pushing(r#":message "m" :patch {:changes [] :diff ""}"#),
             patched("src/lib.rs"),
             "(push ...) missing field `$untrusted`",
@@ -212,4 +207,28 @@ fn a_push_is_refused_where_it_is_made() {
         assert_eq!(code(&err), "arbitrary_almanac::run", "{policy}");
         assert!(err.to_string().contains(message), "{policy}: {err}");
     }
+}
+
+#[test]
+fn a_policy_decides_what_a_refused_patch_means() {
+    let policy = r#"(fn policy [facts {: push : ask}]
+  (let [{: repo : sha : patch} facts]
+    (case (push {: repo :pull 3 :branch "renovate/x" :base sha :message "m" : patch})
+      (nil reason) [(ask {:question (.. "Refused: " reason) :target repo :body ""})]
+      effect [effect])))"#;
+    let asked = |reason: &str| {
+        json!([{"ask": {"question": format!("Refused: {reason}"), "target": "o/r", "pull": null,
+                        "body": {"$untrusted": ""}}}])
+    };
+    let mut empty = patched("src/lib.rs");
+    empty["patch"]["$untrusted"]["changes"] = json!([]);
+    let cases = [
+        (patched(".github/workflows/ci.yml"), asked("denied")),
+        (empty, asked("empty")),
+    ];
+    for (facts, expected) in cases {
+        assert_eq!(decide(policy, facts).unwrap(), expected);
+    }
+    let pushed = decide(policy, patched("src/lib.rs")).unwrap();
+    assert_eq!(pushed[0]["push"]["branch"], json!("renovate/x"), "{pushed}");
 }
