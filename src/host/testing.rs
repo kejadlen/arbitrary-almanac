@@ -62,13 +62,14 @@ fn published(cx: &Cx, _: Vec<Data>) -> BoxFuture<'_, Result<Published, StepError
     Box::pin(async move {
         let ages = cx.get::<Ages>()?;
         let days = ages.0.load(Ordering::SeqCst);
-        Ok(match days {
-            0 => Published::Unknown,
-            days => Published::At(
-                time::OffsetDateTime::now_utc()
-                    - time::Duration::days(i64::try_from(days).unwrap_or_default()),
-            ),
-        })
+        if days == 0 {
+            return Ok(Published::Unknown);
+        }
+        let hours = i64::try_from(days * 24).unwrap_or_default();
+        let at = jiff::Timestamp::now() - jiff::SignedDuration::from_hours(hours);
+        // Almanac's publish time reads RFC 3339, which is how a jiff timestamp prints.
+        let at = serde_json::json!({ "At": at.to_string() });
+        serde_json::from_value(at).map_err(StepError::from)
     })
 }
 

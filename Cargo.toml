@@ -26,9 +26,9 @@ tracing-subscriber = { version = "*", features = ["env-filter"] }
 [dev-dependencies]
 assert_cmd = "*"
 hegeltest = { version = "*", default-features = false, features = ["static-engine"] }
+jiff = "*"
 predicates = "*"
 tempfile = "*"
-time = "*"
 
 [lints.clippy]
 self_named_module_files = "warn"
