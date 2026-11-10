@@ -65,10 +65,15 @@ impl Sandbox {
         let left = AtomicU32::new(BUDGET);
         let every = HookTriggers::new().every_nth_instruction(1000);
         let hooked = thread.set_hook(every, move |_, _| {
-            let spent = left.fetch_update(Memory::SeqCst, Memory::SeqCst, |n| n.checked_sub(1));
-            match spent {
-                Ok(_) => Ok(VmState::Continue),
-                Err(_) => Err(mlua::Error::runtime("ran past its instruction budget")),
+            // The hook runs only on this thread's own coroutine, so a load and a store do not
+            // race. `fetch_update` is deprecated on newer toolchains, and `try_update` is not on
+            // older ones.
+            match left.load(Memory::SeqCst).checked_sub(1) {
+                Some(n) => {
+                    left.store(n, Memory::SeqCst);
+                    Ok(VmState::Continue)
+                }
+                None => Err(mlua::Error::runtime("ran past its instruction budget")),
             }
         });
         hooked?;
