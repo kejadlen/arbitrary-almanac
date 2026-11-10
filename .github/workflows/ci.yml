@@ -20,7 +20,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup component add clippy rustfmt llvm-tools
+      # rust-toolchain.toml names the toolchain and its components, and rustup installs them.
+      - run: rustup show active-toolchain
       - run: cargo install grcov cargo-mutants just
       - run: cargo fmt --check
       - run: just clippy coverage
