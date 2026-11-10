@@ -21,13 +21,13 @@ pub use gather::{Call, Dispatch};
 pub use policy::Decision;
 pub use registered::Registration;
 
-use crate::catalog::{Event, Read};
+use crate::catalog::{Event, Prompt, Read};
 use crate::{Catalog, Error};
 use fennel::{Fennel, Source};
 use form::Form;
 use sandbox::Sandbox;
 use serde_json::Value as Data;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A workflow that has been read and checked, but not run.
 #[derive(Debug)]
@@ -39,6 +39,8 @@ pub struct Workflow {
     event: Event,
     /// Every string literal in the source. An effect's names must be among them.
     literals: BTreeSet<String>,
+    /// Each agent the declaration names, with the catalog prompt it runs.
+    agents: BTreeMap<String, Prompt>,
     /// Every read in the catalog. `gather` reaches only those of the providers it was handed.
     reads: Vec<Read>,
 }
@@ -58,6 +60,7 @@ impl Workflow {
                 on: declaration.on.clone(),
                 src: source.named(),
             })?;
+        let agents = agents(catalog, &declaration, &source)?;
         let capabilities = capabilities::read(catalog, &declaration, &source, &forms)?;
         let lua = compile::compile(&fennel, &source, &forms)?;
         Ok(Self {
@@ -72,6 +75,7 @@ impl Workflow {
                 .map(str::to_string)
                 .collect(),
             reads: catalog.reads.clone(),
+            agents,
         })
     }
 
@@ -166,6 +170,41 @@ fn read_declaration(source: &Source, forms: &[Form]) -> Result<Declaration, Erro
         src: source.named(),
         at: form.span(),
     })
+}
+
+/// Each declared agent's prompt, from the catalog. An agent's `:vars` are the prompt's, so the
+/// declaration says what each prompt is filled with.
+fn agents(
+    catalog: &Catalog,
+    declaration: &Declaration,
+    source: &Source,
+) -> Result<BTreeMap<String, Prompt>, Error> {
+    let resolve = |(name, agent): (&String, &declaration::Agent)| {
+        let prompt = catalog.prompt(&agent.prompt).ok_or_else(|| Error::Prompt {
+            agent: name.clone(),
+            prompt: agent.prompt.clone(),
+            src: source.named(),
+        })?;
+        let declared: BTreeSet<&str> = agent.vars.iter().map(String::as_str).collect();
+        let expected: BTreeSet<&str> = prompt.vars.iter().copied().collect();
+        if declared != expected {
+            return Err(Error::Vars {
+                agent: name.clone(),
+                expected: format!(
+                    "[{}]",
+                    prompt
+                        .vars
+                        .iter()
+                        .map(|v| format!(":{v}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ),
+                src: source.named(),
+            });
+        }
+        Ok((name.clone(), prompt.clone()))
+    };
+    declaration.agents.iter().map(resolve).collect()
 }
 
 /// The value of `(local <name> value)`, if `form` is that.

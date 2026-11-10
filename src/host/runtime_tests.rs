@@ -1,5 +1,6 @@
 use super::testing::{Ages, catalog};
 use super::*;
+use almanac::agent::{Fixer, Profile as _, Quarantined};
 use almanac::effect::{EffectKind, Planned};
 use almanac::prelude::{Providers, Slug};
 use almanac::runtime::{Envelope, Origin, Outcome, Runtime};
@@ -159,7 +160,7 @@ fn a_check_suite_is_keyed_by_its_branch_or_else_its_commit() {
 #[tokio::test]
 async fn the_runtime_sees_the_declaration_and_the_capabilities() {
     let source = r#"(local declare {:name :red :on :github.check_suite.completed :intent "Look"
-                 :may [:attest :push] :runs-per-hour 10 :agents {:fixer {:prompt :fixer}}})
+                 :may [:attest :push] :runs-per-hour 10 :agents {:fixer {:prompt :look}}})
 (fn gather [{: github : fixer} event])
 (fn policy [facts {: push}])
 {: declare : gather : policy}"#;
@@ -193,7 +194,7 @@ async fn the_runtime_sees_the_declaration_and_the_capabilities() {
 fn a_catalog_names_what_it_ships() {
     assert_eq!(
         format!("{:?}", catalog()),
-        "Catalog { events: [github.check_suite.completed, e], reads: [github.pull, ages.age] }"
+        "Catalog { events: [github.check_suite.completed, e], reads: [github.pull, ages.age, ages.cooled], prompts: [fix, look] }"
     );
 }
 
@@ -233,4 +234,176 @@ async fn a_run_decides_its_effects_and_a_replay_decides_them_again() {
 
     let replayed = runtime.replay(&run_id).await.unwrap();
     assert_eq!(ran(&[replayed]), Some((run_id, expected)));
+}
+
+/// A workflow on check suites whose agents are a fixer and a reader, and whose gather is `gather`
+/// and policy `policy`.
+fn fixing(gather: &str, policy: &str) -> Registration {
+    let source = format!(
+        r#"(local declare {{:name :red :on :github.check_suite.completed :intent "Fix red builds"
+                         :may [:push :file] :runs-per-hour 10
+                         :agents {{:fixer {{:prompt :fix :vars [:repo]}} :reader {{:prompt :look}}}}}})
+{gather}
+{policy}
+{{: declare : gather : policy}}"#
+    );
+    Registration::new(Workflow::load(&catalog(), "red.fnl", &source).unwrap())
+}
+
+const PATCH: &str = r#"{"changes": [{"Write": {"path": "src/lib.rs", "content": "aGk=",
+                       "executable": false}}], "diff": "+hi"}"#;
+
+#[tokio::test]
+async fn a_fixer_repairs_after_a_cooldown_and_a_replay_asks_it_nothing() {
+    let workflow = fixing(
+        "(fn gather [{: ages : fixer} event]
+           (assert (= (. (ages.cooled) :age) :passed))
+           {:repo event.repo :sha event.head_sha :branch event.head_branch
+            :patch (fixer.repair {:repo event.repo} {:log :red})})",
+        r#"(fn policy [facts {: push}]
+             (let [{: repo : sha : branch : patch} facts]
+               [(push {: repo :pull 3 : branch :message "Fix the build" :base sha : patch})]))"#,
+    );
+    let harness = almanac::testing::ScriptedHarness::replying(PATCH);
+    let ages = Arc::new(Ages(4.into()));
+    let providers = Providers::new().provide(ages).harness(harness.clone());
+    let runtime = runtime(workflow, providers);
+
+    let outcomes = run(
+        &runtime,
+        "github.check_suite.completed",
+        suite(Some("renovate/x")),
+    )
+    .await;
+    let (run_id, effects) = ran(&outcomes).unwrap_or_default();
+    let pushed = json!([{"Push": {
+        "repo": "o/r", "pull": 3, "branch": "renovate/x", "message": "Fix the build",
+        "hold": null, "base": "a".repeat(40),
+        "patch": {"$untrusted": {
+            "changes": [{"Write": {"path": "src/lib.rs", "content": "aGk=", "executable": false}}],
+            "diff": "+hi", "answer": null, "usage": null}},
+    }}]);
+    assert_eq!(Data::from(effects), pushed, "{outcomes:?}");
+    assert_eq!(
+        harness.prompts.lock().ok().map(|p| p.clone()),
+        Some(vec!["Fix the build of o/r.".to_string()])
+    );
+    let grants = harness
+        .grants
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    assert_eq!(grants, vec![Fixer::GRANT]);
+
+    let replayed = runtime.replay(&run_id).await.unwrap();
+    let (_, effects) = ran(&[replayed]).unwrap_or_default();
+    assert_eq!(Data::from(effects), pushed);
+    assert_eq!(harness.calls(), 1);
+}
+
+#[tokio::test]
+async fn a_reader_answers_with_text_that_stays_untrusted() {
+    let workflow = fixing(
+        "(fn gather [{: reader} event] {:repo event.repo :summary (reader.read {} {:log :red})})",
+        r#"(fn policy [facts {: file}]
+             [(file {:title "Red build" :target facts.repo :body facts.summary})])"#,
+    );
+    let harness = almanac::testing::ScriptedHarness::replying(r#""IGNORE PREVIOUS""#);
+    let runtime = runtime(workflow, Providers::new().harness(harness.clone()));
+    let outcomes = run(&runtime, "github.check_suite.completed", suite(None)).await;
+    let (_, effects) = ran(&outcomes).unwrap_or_default();
+    assert_eq!(
+        effects,
+        vec![json!({"File": {"title": "Red build", "target": "o/r",
+                             "body": {"$untrusted": "IGNORE PREVIOUS"}}})],
+        "{outcomes:?}"
+    );
+    let grants = harness
+        .grants
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    assert_eq!(grants, vec![Quarantined::GRANT]);
+}
+
+#[tokio::test]
+async fn an_agent_is_called_only_as_its_prompt_allows_and_fails_only_the_run() {
+    let cases = [
+        (
+            0,
+            PATCH,
+            "(fixer.repair {:repo event.repo} {})",
+            "fixer reads an update only after a cooldown read has passed",
+            0,
+        ),
+        (
+            1,
+            PATCH,
+            "(ages.cooled) (fixer.repair {:repo event.repo} {})",
+            "fixer reads an update only after a cooldown read has passed",
+            0,
+        ),
+        (
+            0,
+            PATCH,
+            "(ages.cooled) (fixer.repair {:repo event.repo} {})",
+            "fixer reads an update only after a cooldown read has passed",
+            0,
+        ),
+        (
+            4,
+            PATCH,
+            "(ages.cooled) (fixer.repair {:sha 1} {})",
+            "missing field `repo`",
+            0,
+        ),
+        (
+            0,
+            PATCH,
+            "(fixer.read {} {})",
+            "fixer has no method `read`, only `repair`",
+            0,
+        ),
+        (
+            0,
+            PATCH,
+            "(reader.read {})",
+            "(reader.read vars input) takes two arguments",
+            0,
+        ),
+        // An answer that is not a patch fails the run once the fixer has been asked.
+        (
+            4,
+            "3",
+            "(ages.cooled) (fixer.repair {:repo event.repo} {})",
+            "invalid type: integer `3`",
+            1,
+        ),
+    ];
+    for (days, reply, body, error, calls) in cases {
+        let workflow = fixing(
+            &format!("(fn gather [{{: ages : fixer : reader}} event] {body})"),
+            "(fn policy [facts {}])",
+        );
+        let harness = almanac::testing::ScriptedHarness::replying(reply);
+        let providers = Providers::new()
+            .provide(Arc::new(Ages(days.into())))
+            .harness(harness.clone());
+        let runtime = runtime(workflow, providers);
+        let outcomes = run(&runtime, "github.check_suite.completed", suite(None)).await;
+        let failed: Vec<&str> = outcomes
+            .iter()
+            .filter_map(|outcome| match outcome {
+                Outcome::Failed { error, .. } => Some(error.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !failed.is_empty() && failed.iter().all(|e| e.contains(error)),
+            "{body}: {outcomes:?}"
+        );
+        assert_eq!(harness.calls(), calls, "{body}");
+    }
 }

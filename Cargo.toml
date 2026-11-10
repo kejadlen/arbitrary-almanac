@@ -28,6 +28,7 @@ assert_cmd = "*"
 hegeltest = { version = "*", default-features = false, features = ["static-engine"] }
 predicates = "*"
 tempfile = "*"
+time = "*"
 
 [lints.clippy]
 self_named_module_files = "warn"

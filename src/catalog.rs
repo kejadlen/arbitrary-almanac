@@ -1,14 +1,19 @@
-//! What this binary ships for workflows to use: the events a workflow may run on and the reads
-//! `gather` may be handed. Prompts join it as the host grows.
+//! What this binary ships for workflows to use: the events a workflow may run on, the reads
+//! `gather` may be handed, and the prompts its agents run.
 
-use almanac::cx::{Cx, Record, StepError};
-use almanac::taint::Observed;
+use almanac::agent::{AgentSpec, Fixer, Quarantined, Template};
+use almanac::cooled::{Age, Cooled, Published};
+use almanac::cx::{Cx, Halt, Record, StepError};
+use almanac::patch::Patch;
+use almanac::taint::{Observed, Untrusted};
 use almanac::wire::Malformed;
 use almanac::workflow::Subject;
 use futures::future::BoxFuture;
 use serde::Serialize;
-use serde_json::Value as Data;
+use serde::de::DeserializeOwned;
+use serde_json::{Value as Data, json};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Everything a workflow may name. An event, provider, or read not here refuses the workflow at
 /// load or ends its run.
@@ -16,6 +21,7 @@ use std::sync::Arc;
 pub struct Catalog {
     pub events: Vec<Event>,
     pub reads: Vec<Read>,
+    pub prompts: Vec<Prompt>,
 }
 
 impl Catalog {
@@ -24,11 +30,16 @@ impl Catalog {
         Self {
             events: vec![check_suite_completed()],
             reads: vec![],
+            prompts: vec![],
         }
     }
 
     pub fn event(&self, kind: &str) -> Option<&Event> {
         self.events.iter().find(|event| event.kind == kind)
+    }
+
+    pub fn prompt(&self, name: &str) -> Option<&Prompt> {
+        self.prompts.iter().find(|prompt| prompt.name == name)
     }
 
     /// Whether any read belongs to the provider `name`, such as `github` for `github.pull`.
@@ -92,8 +103,15 @@ impl Event {
     }
 }
 
+/// What a read answers: data for the script, and, from a cooldown, the proof that an update has
+/// cooled. The proof stays in Rust, where only a fixer's call can use it.
+pub struct Answer {
+    pub data: Data,
+    pub cooled: Option<Cooled>,
+}
+
 type Perform =
-    dyn for<'a> Fn(&'a Cx, Vec<Data>) -> BoxFuture<'a, Result<Data, StepError>> + Send + Sync;
+    dyn for<'a> Fn(&'a Cx, Vec<Data>) -> BoxFuture<'a, Result<Answer, StepError>> + Send + Sync;
 
 /// How a read fetches its answer from the run's providers.
 pub type Fetch<T> = for<'a> fn(&'a Cx, Vec<Data>) -> BoxFuture<'a, Result<T, StepError>>;
@@ -115,7 +133,32 @@ impl Read {
             perform: Arc::new(move |cx, args| {
                 Box::pin(async move {
                     let answer = cx.observe(name, fetch(cx, args)).await?;
-                    Ok(serde_json::to_value(answer)?)
+                    Ok(Answer {
+                        data: serde_json::to_value(answer)?,
+                        cooled: None,
+                    })
+                })
+            }),
+        }
+    }
+
+    /// A read of whether an update has aged past `min_age`, from a publish time `fetch` reads.
+    /// The script sees `{:age :passed}`, `:young`, or `:unknown`. Almanac records the publish
+    /// time and the moment of the check, so a replay reaches the same answer.
+    pub fn cooldown(name: &'static str, min_age: Duration, fetch: Fetch<Published>) -> Self {
+        Self {
+            name,
+            perform: Arc::new(move |cx, args| {
+                Box::pin(async move {
+                    let (age, cooled) = match cx.age(min_age, fetch(cx, args)).await? {
+                        Age::Passed(cooled) => ("passed", Some(cooled)),
+                        Age::Young => ("young", None),
+                        Age::Unknown => ("unknown", None),
+                    };
+                    Ok(Answer {
+                        data: json!({ "age": age }),
+                        cooled,
+                    })
                 })
             }),
         }
@@ -135,9 +178,97 @@ impl Read {
         &self,
         cx: &'a Cx,
         args: Vec<Data>,
-    ) -> BoxFuture<'a, Result<Data, StepError>> {
+    ) -> BoxFuture<'a, Result<Answer, StepError>> {
         (self.perform)(cx, args)
     }
+}
+
+type Invoke = dyn for<'a> Fn(
+        &'a Cx,
+        &'static str,
+        Data,
+        Data,
+        Option<&'a Cooled>,
+    ) -> BoxFuture<'a, Result<Data, StepError>>
+    + Send
+    + Sync;
+
+/// A prompt an agent may run, with the profile that fixes what the agent may do. A workflow's
+/// `:agents` names one by `:prompt`. Its answer is untrusted, so it reaches a script as an opaque
+/// handle.
+#[derive(Clone)]
+pub struct Prompt {
+    pub name: &'static str,
+    /// What the script calls: `read` for a quarantined reader, `repair` for a fixer.
+    pub method: &'static str,
+    pub vars: &'static [&'static str],
+    invoke: Arc<Invoke>,
+}
+
+impl Prompt {
+    /// A quarantined reader of hostile content: no writes, no network, no secrets.
+    pub fn quarantined<T: Template + DeserializeOwned>(name: &'static str) -> Self {
+        Self {
+            name,
+            method: "read",
+            vars: T::VARS,
+            invoke: Arc::new(|cx, agent, vars, input, _| {
+                Box::pin(async move {
+                    let spec = AgentSpec::<Quarantined, T>::quarantined(agent);
+                    let prompt: T = serde_json::from_value(vars)?;
+                    let answer: Untrusted<Data> =
+                        cx.agent(spec).read(prompt, &input).await.map_err(step)?;
+                    Ok(serde_json::to_value(answer)?)
+                })
+            }),
+        }
+    }
+
+    /// A fixer, which writes inside a sandbox and answers with a patch. It reads an update only
+    /// after a cooldown read in the same run has passed.
+    pub fn fixer<T: Template + DeserializeOwned>(name: &'static str) -> Self {
+        Self {
+            name,
+            method: "repair",
+            vars: T::VARS,
+            invoke: Arc::new(|cx, agent, vars, input, cooled| {
+                Box::pin(async move {
+                    let Some(cooled) = cooled else {
+                        return Err(StepError(format!(
+                            "{agent} reads an update only after a cooldown read has passed"
+                        )));
+                    };
+                    let spec = AgentSpec::<Fixer, T>::fixer(agent);
+                    let prompt: T = serde_json::from_value(vars)?;
+                    let patch: Untrusted<Patch> = cx
+                        .agent(spec)
+                        .repair(prompt, &input, cooled)
+                        .await
+                        .map_err(step)?;
+                    Ok(serde_json::to_value(patch)?)
+                })
+            }),
+        }
+    }
+
+    pub fn invoke<'a>(
+        &self,
+        cx: &'a Cx,
+        agent: &'static str,
+        vars: Data,
+        input: Data,
+        cooled: Option<&'a Cooled>,
+    ) -> BoxFuture<'a, Result<Data, StepError>> {
+        (self.invoke)(cx, agent, vars, input, cooled)
+    }
+}
+
+/// An agent's call fails only as a step: it never decides to stop.
+fn step(halt: Halt) -> StepError {
+    let Halt::Failed(error) = halt else {
+        unreachable!("an agent call only fails")
+    };
+    error
 }
 
 /// One run per branch, since a fix for a red build lands on the branch, not the commit.
@@ -155,6 +286,12 @@ fn check_suite_completed() -> Event {
 impl std::fmt::Debug for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.kind)
+    }
+}
+
+impl std::fmt::Debug for Prompt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name)
     }
 }
 

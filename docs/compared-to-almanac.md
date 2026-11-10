@@ -100,13 +100,18 @@ text and returns a value from a closed set. The spike found that every
 such function is a possible way out, and every hole it found was in one.
 Reintroducing `narrow` here is where that cost returns.
 
-Agents, prompts, `push`, and the catalog's reads are stubs. Policy runs
-and makes attest, await, file, and ask effects, each checked by its
-constructor where it is made; `push` needs a patch checked by code, which
-no agent makes yet, so its constructor refuses. The half of Almanac's
-design that the spike found hardest to port, a model that
-can veto but never approve, cooled proofs before an agent reads an update,
-and patches checked by code, has nothing to compare against here yet.
+The catalog's reads are stubs, so a workflow runs only against test
+providers. Agents and `push` are built, and they follow Almanac's design
+rather than restating it. An agent runs a prompt the binary ships, and its
+declared `:vars` must be that prompt's variables, or the workflow does not
+load. A quarantined reader's answer reaches the script as an opaque handle.
+A fixer reads an update only after a cooldown read in the same run has
+passed: the cooldown's proof is Almanac's `Cooled`, held in Rust beside the
+run and never handed to the script, so a script can neither forge nor keep
+it. The fixer's patch is also a handle, and `(push ...)` checks it against
+Almanac's default patch policy where it is made, so a refused patch ends
+the run with its reason. A model that can veto but never approve has nothing to
+compare against here yet, because no workflow asks a classifier.
 
 ## Trusted code
 
@@ -117,9 +122,9 @@ counts below exclude comments and blank lines:
 |---|---|
 | Almanac | 749 lines, `taint.rs` and `crates/macros` |
 | Spike | 1,931 lines of Rust and 365 of Fennel and Lua |
-| arbitrary-almanac | 1,559 lines of Rust, with agents and reads unbuilt |
+| arbitrary-almanac | 1,814 lines of Rust, with reads unbuilt |
 
-This repository's tests are 1,337 lines beside that. The comparison
+This repository's tests are 1,646 lines beside that. The comparison
 favours Almanac, which puts the boundary in the type system, and it is
 the price of letting the operator never touch Rust.
 

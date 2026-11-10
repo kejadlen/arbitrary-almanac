@@ -39,7 +39,7 @@ fn nothing(_: &Call) -> Result<Data, String> {
 fn gathering(gather: &str) -> String {
     format!(
         r#"(local declare {{:name :n :on :e :intent "i" :may [] :runs-per-hour 1
-                         :agents {{:fixer {{:prompt :fixer}}}}}})
+                         :agents {{:fixer {{:prompt :look}}}}}})
 {gather}
 (fn policy [facts {{}}])
 {{: declare : gather : policy}}"#

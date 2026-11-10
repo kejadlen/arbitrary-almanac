@@ -43,7 +43,7 @@ fn reads_a_declaration_without_running_anything() {
    :intent "Repair a Renovate update whose build fails"
    :may [:attest :ask :push]
    :runs-per-hour 30
-   :agents {:fixer {:prompt :fixer :vars [:repo]}}})
+   :agents {:fixer {:prompt :fix :vars [:repo]}}})
 
 (fn gather [{} event] (error "gather must not run at load"))
 
@@ -64,7 +64,7 @@ fn reads_a_declaration_without_running_anything() {
             agents: [(
                 "fixer".to_string(),
                 Agent {
-                    prompt: "fixer".into(),
+                    prompt: "fix".into(),
                     vars: vec!["repo".into()],
                 },
             )]
@@ -80,7 +80,7 @@ fn agents_and_their_vars_may_be_left_out() {
 
     let source = declaring(
         r#"{:name :n :on :e :intent "i" :may [] :runs-per-hour 1
-            :agents {:fixer {:prompt :fixer}}}"#,
+            :agents {:fixer {:prompt :look}}}"#,
     );
     let workflow = load(&source).unwrap();
     assert!(workflow.declaration().agents["fixer"].vars.is_empty());
@@ -267,7 +267,7 @@ fn a_declaration_must_have_the_right_shape() {
         ),
         (
             r#"{:name :n :on :e :intent "i" :may [] :runs-per-hour 1
-                :agents {:fixer {:prompt :fixer :model :opus}}}"#,
+                :agents {:fixer {:prompt :look :model :opus}}}"#,
             "unknown field `model`",
         ),
     ];
@@ -358,9 +358,14 @@ fn declarations(tc: &TestCase) -> Declaration {
         EffectKind::Ask,
         EffectKind::Push,
     ];
+    // An agent runs one of the catalog's prompts and declares that prompt's variables.
     let agent = || {
-        hegel::tuples!(text(), gs::vecs(text()).max_size(3))
-            .map(|(prompt, vars)| Agent { prompt, vars })
+        gs::sampled_from(vec![("fix", vec!["repo"]), ("look", vec![])]).map(|(prompt, vars)| {
+            Agent {
+                prompt: prompt.into(),
+                vars: vars.into_iter().map(String::from).collect(),
+            }
+        })
     };
     Declaration {
         name: tc.draw(text()),
@@ -393,7 +398,7 @@ fn any_text_loads_or_is_refused_without_panicking(tc: TestCase) {
 fn defining(gather: &str, policy: &str) -> String {
     format!(
         r#"(local declare {{:name :n :on :e :intent "i" :may [:attest :push] :runs-per-hour 1
-                         :agents {{:fixer {{:prompt :fixer}}}}}})
+                         :agents {{:fixer {{:prompt :look}}}}}})
 {gather}
 {policy}
 {{: declare : gather : policy}}"#
@@ -564,7 +569,7 @@ fn a_workflow_is_handed_exactly_what_it_destructures(tc: TestCase) {
 (fn policy [facts {}])
 {{: declare : gather : policy}}",
         may.iter().map(|k| format!(":{}", lower(k))).collect::<Vec<_>>().join(" "),
-        agents.keys().map(|a| format!("{} {{:prompt :p}}", quoted(a))).collect::<Vec<_>>().join(" "),
+        agents.keys().map(|a| format!("{} {{:prompt :look}}", quoted(a))).collect::<Vec<_>>().join(" "),
         destructure(gather_names),
         destructure(effects.iter().map(lower).collect()),
     );
@@ -599,4 +604,47 @@ fn a_workflow_runs_only_on_an_event_the_binary_ships() {
         err.to_string(),
         "no event in this binary is called `github.push`"
     );
+}
+
+#[test]
+fn an_agent_runs_a_prompt_the_binary_ships_filled_with_its_variables() {
+    let agents = |agents: &str| {
+        declaring(&format!(
+            r#"{{:name :n :on :e :intent "i" :may [] :runs-per-hour 1 :agents {{{agents}}}}}"#
+        ))
+    };
+    let cases = [
+        (
+            ":fixer {:prompt :mend :vars [:repo]}",
+            "arbitrary_almanac::prompt",
+            "agent `fixer` runs `mend`, but no prompt in this binary is called that",
+        ),
+        (
+            ":fixer {:prompt :fix}",
+            "arbitrary_almanac::vars",
+            "agent `fixer` must declare its prompt's variables, :vars [:repo]",
+        ),
+        (
+            ":fixer {:prompt :fix :vars [:repo :sha]}",
+            "arbitrary_almanac::vars",
+            "agent `fixer` must declare its prompt's variables, :vars [:repo]",
+        ),
+        (
+            ":reader {:prompt :look :vars [:repo]}",
+            "arbitrary_almanac::vars",
+            "agent `reader` must declare its prompt's variables, :vars []",
+        ),
+    ];
+    for (declared, expected_code, message) in cases {
+        let err = load(&agents(declared)).unwrap_err();
+        assert_eq!(
+            (code(&err), err.to_string()),
+            (expected_code.to_string(), message.to_string()),
+            "{declared}"
+        );
+    }
+    let workflow = load(&agents(
+        ":fixer {:prompt :fix :vars [:repo]} :reader {:prompt :look}",
+    ));
+    assert!(workflow.is_ok(), "{workflow:?}");
 }
