@@ -45,7 +45,7 @@ fn generates_completions() {
 
 const RED: &str = r#"(local declare {:name :red :on :github.check_suite.completed
                 :intent "Mark red builds" :may [:attest] :runs-per-hour 10})
-(fn gather [{} event] {:repo event.repo :sha event.head_sha})
+(fn gather [{} event] {:repo event.repo :sha event.sha})
 (fn policy [facts {: attest}]
   [(attest {:context "almanac/red" :state :failure :repo facts.repo :sha facts.sha})])
 {: declare : gather : policy}"#;
