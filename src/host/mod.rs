@@ -45,23 +45,6 @@ pub struct Workflow {
     reads: Vec<Read>,
 }
 
-/// Every `.fnl` workflow in `dir`, in file name order. One that does not load refuses them all,
-/// so a deployment never runs with a workflow missing.
-pub fn load_dir(catalog: &Catalog, dir: &std::path::Path) -> Result<Vec<Workflow>, Error> {
-    let mut paths: Vec<std::path::PathBuf> = fs_err::read_dir(dir)?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<Result<_, _>>()?;
-    paths.retain(|path| path.extension().is_some_and(|ext| ext == "fnl"));
-    paths.sort();
-    paths
-        .iter()
-        .map(|path| {
-            let source = fs_err::read_to_string(path)?;
-            Workflow::load(catalog, &path.display().to_string(), &source)
-        })
-        .collect()
-}
-
 impl Workflow {
     /// Reads a workflow from its source. `name` labels errors, usually the file name.
     pub fn load(catalog: &Catalog, name: &str, source: &str) -> Result<Self, Error> {

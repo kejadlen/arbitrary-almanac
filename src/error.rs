@@ -51,6 +51,13 @@ pub enum Error {
         src: Arc<NamedSource<String>>,
     },
 
+    #[error("{path} ends with a bundle that cannot be read")]
+    #[diagnostic(
+        code(arbitrary_almanac::bundle),
+        help("rebuild it with `arbitrary-almanac build`, since nothing else writes a bundle")
+    )]
+    Bundle { path: String },
+
     #[error("{message}")]
     #[diagnostic(code(arbitrary_almanac::compile))]
     Compile {

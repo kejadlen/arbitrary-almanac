@@ -648,26 +648,3 @@ fn an_agent_runs_a_prompt_the_binary_ships_filled_with_its_variables() {
     ));
     assert!(workflow.is_ok(), "{workflow:?}");
 }
-
-#[test]
-fn a_directory_loads_its_workflows_in_name_order_or_not_at_all() {
-    let dir = tempfile::tempdir().unwrap();
-    let named = |name: &str| declaring(&MINIMAL.replace(":name :n", &format!(":name :{name}")));
-    fs_err::write(dir.path().join("b.fnl"), named("b")).unwrap();
-    fs_err::write(dir.path().join("a.fnl"), named("a")).unwrap();
-    fs_err::write(dir.path().join("notes.md"), "not a workflow").unwrap();
-    let loaded = load_dir(&super::testing::catalog(), dir.path()).unwrap();
-    let names: Vec<&str> = loaded
-        .iter()
-        .map(|workflow| workflow.declaration().name.as_str())
-        .collect();
-    assert_eq!(names, ["a", "b"]);
-
-    fs_err::write(dir.path().join("c.fnl"), "(oops").unwrap();
-    let err = load_dir(&super::testing::catalog(), dir.path()).unwrap_err();
-    assert_eq!(code(&err), "arbitrary_almanac::parse");
-
-    let missing = dir.path().join("missing");
-    let err = load_dir(&super::testing::catalog(), &missing).unwrap_err();
-    assert!(err.to_string().contains("missing"), "{err}");
-}

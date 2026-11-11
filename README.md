@@ -81,9 +81,15 @@ ALMANAC_MODE=live ./almanac run                 # live is deliberate, set in the
 Everything after `build` is Almanac's own CLI, unchanged. `build` is a verb on
 the same binary.
 
-`build` is not built yet. Until it is, the binary loads every `.fnl` file in
-`$ARBITRARY_ALMANAC_WORKFLOWS` (default `workflows`) at startup, refuses to
-start if any fails to load, and hands the rest of its arguments to Almanac:
+`build` loads every `.fnl` file in the directory against the binary's
+catalog and writes nothing if one fails. It appends their sources to a copy of
+the binary, replacing any bundle that binary already carried, so a bundled
+binary can build again. `--binary PATH` bundles into another generic binary,
+such as one built for Linux, since bundling compiles no Rust.
+
+A binary without a bundle loads every `.fnl` file in
+`$ARBITRARY_ALMANAC_WORKFLOWS` (default `workflows`) at startup instead, which
+suits writing a workflow:
 
 ```
 arbitrary-almanac synth
@@ -136,7 +142,9 @@ docs/               how this differs from Almanac and the Fennel spike
    spike's `read-logs` bug, a bare `case` pattern binding `false` from a
    passing job, has nowhere to live.
 2. **Capabilities and the bundle.** Hand providers and effects in as
-   arguments, retire the tree-walking analyzer, and add `build`.
+   arguments, retire the tree-walking analyzer, and add `build`. Done:
+   capabilities come from what `gather` and `policy` destructure, and `build`
+   writes the bundle `src/bundle.rs` reads at startup.
 3. **Quire as a source.** Quire already posts a `PushEvent` to `quire-ci`. A
    broker `Source` for Quire needs Quire to sign it and add the broker as a
    target. CI results would need a new event from Quire.
