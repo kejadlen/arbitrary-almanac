@@ -260,14 +260,18 @@ impl Prompt {
         }
     }
 
-    /// A fixer, which writes inside a sandbox and answers with a patch. It reads an update only
-    /// after a cooldown read in the same run has passed.
-    pub fn fixer<T: Template + DeserializeOwned>(name: &'static str) -> Self {
+    /// A fixer, which writes inside a sandbox. It reads an update only after a cooldown read in
+    /// the same run has passed. It answers with `{:patch :diff :said}`: the patch to push, and
+    /// for a person asked to take over, its diff and what the agent said, by `said`.
+    pub fn fixer<T: Template + DeserializeOwned>(
+        name: &'static str,
+        said: fn(&Patch) -> String,
+    ) -> Self {
         Self {
             name,
             method: "repair",
             vars: T::VARS,
-            invoke: Arc::new(|cx, agent, vars, input, cooled| {
+            invoke: Arc::new(move |cx, agent, vars, input, cooled| {
                 Box::pin(async move {
                     let Some(cooled) = cooled else {
                         return Err(StepError(format!(
@@ -281,7 +285,8 @@ impl Prompt {
                         .repair(prompt, &input, cooled)
                         .await
                         .map_err(step)?;
-                    Ok(serde_json::to_value(patch)?)
+                    let diff = patch.map(|patch| patch.diff.clone());
+                    Ok(json!({"patch": patch, "diff": diff, "said": patch.map(said)}))
                 })
             }),
         }

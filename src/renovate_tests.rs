@@ -252,11 +252,23 @@ fn build_failures() -> Registration {
     Registration::new(workflow)
 }
 
-/// A forge with a Renovate pull request on `renovate/x` whose build failed, and its head.
+/// A forge with a Renovate pull request on `renovate/x` whose build failed, and its head. The pull
+/// request updates `serde` in `Cargo.toml` and regenerates `Cargo.lock`.
 async fn red_build() -> (SimForge, String) {
     let forge = SimForge::start().await;
     forge.add_repo(simforge::Repo::public("o/r"));
-    let number = forge.add_pull("o/r", simforge::Pull::renovate("renovate/x", "Update x"));
+    let mut pull = simforge::Pull::renovate("renovate/x", "Update x");
+    for (path, diff) in [
+        ("Cargo.toml", "-serde = \"1.0.100\"\n+serde = \"1.0.200\""),
+        (
+            "Cargo.lock",
+            "-version = \"1.0.100\"\n+version = \"1.0.200\"",
+        ),
+    ] {
+        pull.files.push(path.to_string());
+        pull.diffs.insert(path.to_string(), diff.to_string());
+    }
+    let number = forge.add_pull("o/r", pull);
     let sha = forge.pull("o/r", number).head_sha;
     forge.add_suite(
         "o/r",
@@ -293,43 +305,96 @@ fn kinds(effects: &[Data]) -> Vec<String> {
     effects.iter().filter_map(kind).collect()
 }
 
+/// A fixer's answer writing `content`, base64, to `path`.
+fn writing(path: &str, content: &str) -> String {
+    json!({"changes": [{"Write": {"path": path, "content": content, "executable": false}}],
+           "diff": format!("+++ {path}"), "answer": {"summary": "fixed"}})
+    .to_string()
+}
+
 #[tokio::test]
 async fn build_failures_repairs_a_cooled_update_and_pushes_its_patch() {
-    let (forge, sha) = red_build().await;
-    let patch = r#"{"changes": [{"Write": {"path": "src/lib.rs", "content": "aGk=",
-                    "executable": false}}], "diff": "+hi"}"#;
-    let harness = ScriptedHarness::replying(patch);
-    let providers = providers(&forge, days_ago(10)).harness(harness.clone());
-    let effects = decided(providers, &sha).await;
-    assert_eq!(kinds(&effects), ["Push"]);
-    let push = &effects[0]["Push"];
-    assert_eq!(push["branch"], json!("renovate/x"));
-    assert_eq!(push["hold"], json!("almanac/trust"));
-    assert_eq!(push["base"], json!(sha));
-    let inputs = harness.inputs.lock().unwrap().clone();
-    assert_eq!(
-        inputs,
-        vec![json!({"logs": {"$untrusted": "error[E0425]\n"},
-                    "$checkout": {"repo": "o/r", "sha": sha}})]
-    );
+    // A repair may leave the update alone, keep it, or regenerate the lockfile.
+    let cases = [
+        writing("src/lib.rs", "aGk="),
+        // `[dependencies]` and the updated `serde` line.
+        writing("Cargo.toml", "W2RlcGVuZGVuY2llc10Kc2VyZGUgPSAiMS4wLjIwMCIK"),
+        writing("Cargo.lock", "bG9jawo="),
+    ];
+    for reply in cases {
+        let (forge, sha) = red_build().await;
+        let harness = ScriptedHarness::replying(&reply);
+        let providers = providers(&forge, days_ago(10)).harness(harness.clone());
+        let effects = decided(providers, &sha).await;
+        assert_eq!(kinds(&effects), ["Push"], "{reply}");
+        let push = &effects[0]["Push"];
+        assert_eq!(push["branch"], json!("renovate/x"));
+        assert_eq!(push["hold"], json!("almanac/trust"));
+        assert_eq!(push["base"], json!(sha));
+        let inputs = harness.inputs.lock().unwrap().clone();
+        assert_eq!(
+            inputs,
+            vec![json!({"logs": {"$untrusted": "error[E0425]\n"},
+                        "$checkout": {"repo": "o/r", "sha": sha}})]
+        );
+    }
 }
 
 #[tokio::test]
 async fn build_failures_waits_asks_or_stops_when_it_cannot_repair() {
-    let empty = r#"{"changes": [], "diff": ""}"#;
-    let denied = r#"{"changes": [{"Delete": {"path": ".github/workflows/ci.yml"}}], "diff": ""}"#;
+    let empty = r#"{"changes": [], "diff": "", "answer": {"summary": "the build is flaky"}}"#;
+    let denied =
+        r#"{"changes": [{"Delete": {"path": ".github/workflows/ci.yml"}}], "diff": "-ci"}"#;
+    // `[dependencies]` alone, which takes back the update.
+    let undone = writing("Cargo.toml", "W2RlcGVuZGVuY2llc10K");
+    let asked = |question: &str, body: &str| vec![json!(["Attest", "Ask", question, body])];
     let cases = [
-        (days_ago(0), empty, vec!["Await"], 0),
-        (Published::Unknown, empty, vec!["Ask"], 0),
-        (days_ago(10), empty, vec!["Attest", "Ask"], 1),
-        (days_ago(10), denied, vec!["Attest", "Ask"], 1),
+        (days_ago(0), empty, vec![json!(["Await"])], 0),
+        (
+            Published::Unknown,
+            empty,
+            vec![json!([
+                "Ask",
+                "This update's build failed, and nothing says when it was published",
+                "No agent reads an update before its cooldown passes, and this one has no publish time to measure from. It needs a person."
+            ])],
+            0,
+        ),
+        (
+            days_ago(10),
+            empty,
+            asked(
+                "A repair ended with no change to push",
+                "the build is flaky",
+            ),
+            1,
+        ),
+        (
+            days_ago(10),
+            denied,
+            asked("A repair was refused by the patch policy", "-ci"),
+            1,
+        ),
+        (
+            days_ago(10),
+            undone.as_str(),
+            asked("A repair took back the update", "+++ Cargo.toml"),
+            1,
+        ),
     ];
     for (published, reply, expected, calls) in cases {
         let (forge, sha) = red_build().await;
         let harness = ScriptedHarness::replying(reply);
         let providers = providers(&forge, published).harness(harness.clone());
         let effects = decided(providers, &sha).await;
-        assert_eq!(kinds(&effects), expected, "{reply}: {effects:?}");
+        let mut summary = json!(kinds(&effects));
+        if let Some(ask) = effects.iter().find_map(|e| e.get("Ask")) {
+            summary
+                .as_array_mut()
+                .unwrap()
+                .extend([ask["question"].clone(), ask["body"]["$untrusted"].clone()]);
+        }
+        assert_eq!(vec![summary], expected, "{reply}: {effects:?}");
         assert_eq!(harness.calls(), calls, "{reply}");
     }
 }

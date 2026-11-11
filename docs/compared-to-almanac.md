@@ -108,9 +108,11 @@ binary depends on as a library rather than copying. Its providers set up
 GitHub, the registries, and the Claude harness from the environment, and
 its own functions decide what a check suite or a pull request body means:
 `github.pull` reads a Renovate pull request as it is now, `github.logs`
-the tail of each failed job's log, and `ages.cooled` whether the update a
-pull request's text names has cooled. The fixer runs the renovate
-almanac's prompt. So this host owns only the fetching and the handing to a
+the tail of each failed job's log, `ages.cooled` whether the update a
+pull request's text names has cooled, and `github.undoes` whether a patch
+takes back what a pull request updates. The fixer runs the renovate
+almanac's prompt, and what its agent said is read as the renovate almanac
+reads it. So this host owns only the fetching and the handing to a
 script, and a judgement fixed upstream is fixed here. Agents and `push` are built, and they follow Almanac's design
 rather than restating it. An agent runs a prompt the binary ships, and its
 declared `:vars` must be that prompt's variables, or the workflow does not
@@ -118,7 +120,10 @@ load. A quarantined reader's answer reaches the script as an opaque handle.
 A fixer reads an update only after a cooldown read in the same run has
 passed: the cooldown's proof is Almanac's `Cooled`, held in Rust beside the
 run and never handed to the script, so a script can neither forge nor keep
-it. The fixer's patch is also a handle, and `(push ...)` checks it against
+it. A fixer answers with `{:patch :diff :said}`, each a handle: the patch
+to push, and for a person asked to take over, its diff and what the agent
+said. The patch can become a push, and the other two an ask's body.
+`(push ...)` checks the patch against
 Almanac's default patch policy where it is made. A refused patch makes
 `(push ...)` answer `nil` and the reason, such as `:empty` or `:denied`,
 as `io.open` does, so a policy decides what a refusal means: the shipped
@@ -136,9 +141,9 @@ counts below exclude comments and blank lines:
 |---|---|
 | Almanac | 749 lines, `taint.rs` and `crates/macros` |
 | Spike | 1,931 lines of Rust and 365 of Fennel and Lua |
-| arbitrary-almanac | 2,188 lines of Rust, beside the renovate almanac it reads through |
+| arbitrary-almanac | 2,213 lines of Rust, beside the renovate almanac it reads through |
 
-This repository's tests are 2,097 lines beside that. The comparison
+This repository's tests are 2,156 lines beside that. The comparison
 favours Almanac, which puts the boundary in the type system, and it is
 the price of letting the operator never touch Rust.
 
