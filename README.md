@@ -18,7 +18,7 @@ workflow never means touching Rust.
 
 - **One generic binary.** Almanac's runtime, store, outbox, and replay, with
   every provider compiled in: GitHub, the Claude harness, the Podman sandbox,
-  package registries, and (planned) Quire. It is released on its own schedule,
+  and package registries. It is released on its own schedule,
   the way frork is.
 - **Workflows in Fennel.** Each workflow is a `.fnl` file with a declaration,
   a `gather`, and a `policy`. It runs on Almanac's real runtime through the
@@ -137,7 +137,7 @@ docs/               how this differs from Almanac and the Fennel spike
 
 1. **Run the spike's workflow from here.** Depend on Almanac by git, promote
    the spike's host, and run `build_failures.fnl` against GitHub in a dry run.
-   No changes to Almanac. `workflows/build_failures.fnl` is that workflow.
+   No changes to Almanac. Done: `workflows/build_failures.fnl` is that workflow.
    Reading logs moved into the catalog's `github.logs`, in Rust, so the
    spike's `read-logs` bug, a bare `case` pattern binding `false` from a
    passing job, has nowhere to live.
@@ -145,21 +145,19 @@ docs/               how this differs from Almanac and the Fennel spike
    arguments, retire the tree-walking analyzer, and add `build`. Done:
    capabilities come from what `gather` and `policy` destructure, and `build`
    writes the bundle `src/bundle.rs` reads at startup.
-3. **Quire as a source.** Quire already posts a `PushEvent` to `quire-ci`. A
-   broker `Source` for Quire needs Quire to sign it and add the broker as a
-   target. CI results would need a new event from Quire.
+3. **Run it for real.** Deploy the bundled binary beside Almanac's broker,
+   receiving GitHub's webhooks, and let `build_failures` push repairs to one
+   repository with read-only off.
 4. **SQLite store.** Almanac's `Store` is a trait, but `app.rs` connects to
    Postgres directly, as do the broker and `deliveries`. This needs a change
    upstream.
-5. **Effects without pull requests.** Almanac's `Push` and `Ask` assume a
-   pull request, and Quire has none. Until a workflow needs this,
-   pull-request work stays on the GitHub mirror.
 
-A `Tracker` for Linear or Ranger fits anywhere: the trait is two methods.
+GitHub is the only source. A `Tracker` for Linear or Ranger fits anywhere: the trait is two methods.
 
 ## Status
 
-Planning. Nothing here runs yet. The case for this shape is in my
+`build_failures` runs against GitHub in a dry run, and `build` bundles it into
+the binary. Nothing runs live yet. The case for this shape is in my
 [review of the Fennel spike](https://github.com/ivy/almanac/pull/5), and
 [docs/compared-to-almanac.md](docs/compared-to-almanac.md) tracks how the
 result differs from Almanac as the host grows.
