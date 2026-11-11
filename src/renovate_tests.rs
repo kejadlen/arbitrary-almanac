@@ -41,7 +41,7 @@ fn reporting(gather: &str, may: &str, agents: &str) -> Registration {
 }
 
 const REPORT: &str = r#"(fn gather [{: github : ages} event]
-  (let [pull (github.pull event.repo event.head_branch)]
+  (let [pull (github.pull event.repo event.branch)]
     (if (not pull.found)
         {:repo event.repo :said "missing" :body ""}
         {:repo event.repo
@@ -229,7 +229,7 @@ async fn the_fixer_runs_the_renovate_almanacs_prompt() {
     let forge = SimForge::start().await;
     forge.add_repo(simforge::Repo::public("o/r"));
     let gather = r#"(fn gather [{: github : ages : fixer} event]
-  (ages.cooled (. (github.pull event.repo event.head_branch) :text))
+  (ages.cooled (. (github.pull event.repo event.branch) :text))
   (fixer.repair {:repo event.repo} {:logs ""})
   {:repo event.repo :said "fixed" :body ""})"#;
     let workflow = reporting(gather, ":file", ":fixer {:prompt :fixer :vars [:repo]}");
@@ -397,6 +397,55 @@ async fn build_failures_waits_asks_or_stops_when_it_cannot_repair() {
         assert_eq!(vec![summary], expected, "{reply}: {effects:?}");
         assert_eq!(harness.calls(), calls, "{reply}");
     }
+}
+
+/// What one scan of `forge` finds, and the kinds of effect each run it starts decides.
+async fn scanned(providers: Providers) -> (usize, Vec<Vec<String>>) {
+    let runtime = Runtime::new(vec![Box::new(build_failures())], providers)
+        .with_store(Arc::new(MemoryStore::default()));
+    let found = runtime.backfill(None).await.unwrap().found;
+    let outcomes = runtime.drain().await.unwrap();
+    let decided = outcomes
+        .iter()
+        .map(|outcome| {
+            let Outcome::Ran { effects, .. } = outcome else {
+                unreachable!("a scanned run should run: {outcome:?}")
+            };
+            let effects: Vec<Data> = effects
+                .iter()
+                .map(|e| serde_json::to_value(almanac::effect::Planned::from(e)).unwrap())
+                .collect();
+            kinds(&effects)
+        })
+        .collect();
+    (found, decided)
+}
+
+#[tokio::test]
+async fn a_scan_finds_a_red_build_no_webhook_delivered_and_repairs_it() {
+    let (forge, _) = red_build().await;
+    let harness = ScriptedHarness::replying(writing("src/lib.rs", "aGk="));
+    let repairing = providers(&forge, days_ago(10)).harness(harness.clone());
+    assert_eq!(
+        scanned(repairing).await,
+        (1, vec![vec!["Push".to_string()]])
+    );
+    assert_eq!(harness.calls(), 1);
+
+    // A build that passed needs nothing, so a scan finds nothing.
+    let forge = SimForge::start().await;
+    forge.add_repo(simforge::Repo::public("o/r"));
+    let number = forge.add_pull("o/r", simforge::Pull::renovate("renovate/x", "Update x"));
+    let sha = forge.pull("o/r", number).head_sha;
+    forge.add_suite("o/r", Suite::finished(&sha, "renovate/x", "success", ""));
+    assert_eq!(scanned(providers(&forge, days_ago(10))).await, (0, vec![]));
+}
+
+#[test]
+fn build_failures_declares_its_scan() {
+    use almanac::workflow::Registered as _;
+    let manifest = build_failures().manifest();
+    assert_eq!(manifest["scans"], json!(true), "{manifest}");
 }
 
 #[tokio::test]

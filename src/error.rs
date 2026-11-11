@@ -33,6 +33,32 @@ pub enum Error {
         src: Arc<NamedSource<String>>,
     },
 
+    #[error("no scan in this binary is called `{scan}`")]
+    #[diagnostic(
+        code(arbitrary_almanac::scan),
+        help(
+            "`:scan` names a scan from the catalog, such as :renovate.build-failures, or is left out"
+        )
+    )]
+    Scan {
+        scan: String,
+        #[source_code]
+        src: Arc<NamedSource<String>>,
+    },
+
+    #[error("scan `{scan}` finds {finds} events, but this workflow runs on {on}")]
+    #[diagnostic(
+        code(arbitrary_almanac::scan_kind),
+        help("a workflow scans for the events it runs on, so `:scan` and `:on` must agree")
+    )]
+    ScanKind {
+        scan: String,
+        finds: &'static str,
+        on: String,
+        #[source_code]
+        src: Arc<NamedSource<String>>,
+    },
+
     #[error("agent `{agent}` runs `{prompt}`, but no prompt in this binary is called that")]
     #[diagnostic(code(arbitrary_almanac::prompt))]
     Prompt {

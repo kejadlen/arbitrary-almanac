@@ -22,7 +22,7 @@ fn on(on: &str, gather: &str) -> Registration {
     Registration::new(Workflow::load(&catalog(), "red.fnl", &source).unwrap())
 }
 
-fn suite(branch: Option<&str>) -> Data {
+fn suite(branch: &str) -> Data {
     json!({
         "repository": {"full_name": "o/r"},
         "check_suite": {"head_branch": branch, "head_sha": "a".repeat(40), "conclusion": "failure",
@@ -89,7 +89,7 @@ async fn a_run_reads_through_cx_and_a_replay_reads_nothing_again() {
     let outcomes = run(
         &runtime,
         "github.check_suite.completed",
-        suite(Some("renovate/x")),
+        suite("renovate/x"),
     )
     .await;
     let run_id = ran_quietly(&outcomes);
@@ -140,19 +140,13 @@ async fn a_read_that_fails_or_does_not_exist_fails_the_run() {
 }
 
 #[test]
-fn a_check_suite_is_keyed_by_its_branch_or_else_its_commit() {
+fn a_check_suite_is_keyed_by_its_branch() {
     let workflow = on(":github.check_suite.completed", "(fn gather [{} event])");
     let repo: Slug = "o/r".parse().unwrap();
-    let cases = [
-        (Some("renovate/x"), "o/r:renovate/x".to_string()),
-        (None, format!("o/r:{}", "a".repeat(40))),
-    ];
-    for (branch, key) in cases {
-        let identity = workflow.identify(&suite(branch)).unwrap();
-        assert_eq!(identity.key, key);
-        assert_eq!(identity.subjects, vec![Subject::repo(&repo)]);
-        assert!(identity.wanted);
-    }
+    let identity = workflow.identify(&suite("renovate/x")).unwrap();
+    assert_eq!(identity.key, "o/r:renovate/x");
+    assert_eq!(identity.subjects, vec![Subject::repo(&repo)]);
+    assert!(identity.wanted);
     let pointer = workflow.identify(&json!({})).err().map(|err| err.pointer);
     assert_eq!(pointer.as_deref(), Some("/repository/full_name"));
 }
@@ -194,7 +188,7 @@ async fn the_runtime_sees_the_declaration_and_the_capabilities() {
 fn a_catalog_names_what_it_ships() {
     assert_eq!(
         format!("{:?}", catalog()),
-        "Catalog { events: [github.check_suite.completed, e], reads: [github.pull, ages.age, ages.cooled], prompts: [fix, look] }"
+        "Catalog { events: [github.check_suite.completed, e], reads: [github.pull, ages.age, ages.cooled], prompts: [fix, look], scans: [renovate.build-failures] }"
     );
 }
 
@@ -202,7 +196,12 @@ fn a_catalog_names_what_it_ships() {
 async fn a_workflow_runs_only_on_its_event() {
     let workflow = on(":e", "(fn gather [{} event] (error :ran))");
     let runtime = runtime(workflow, Providers::new());
-    let outcomes = run(&runtime, "github.check_suite.completed", suite(None)).await;
+    let outcomes = run(
+        &runtime,
+        "github.check_suite.completed",
+        suite("renovate/x"),
+    )
+    .await;
     assert!(outcomes.is_empty(), "{outcomes:?}");
 }
 
@@ -210,7 +209,7 @@ async fn a_workflow_runs_only_on_its_event() {
 async fn a_run_decides_its_effects_and_a_replay_decides_them_again() {
     let source = r#"(local declare {:name :red :on :github.check_suite.completed :intent "Look"
                  :may [:attest :await :file :ask] :runs-per-hour 10})
-(fn gather [{} event] {:repo event.repo :sha event.head_sha})
+(fn gather [{} event] {:repo event.repo :sha event.sha})
 (fn policy [facts {: attest : await : file : ask}]
   [(attest {:context "almanac/red" :state :failure :repo facts.repo :sha facts.sha})
    (await "checks")
@@ -228,7 +227,12 @@ async fn a_run_decides_its_effects_and_a_replay_decides_them_again() {
                        "body": {"$untrusted": "b"}}}),
     ];
 
-    let outcomes = run(&runtime, "github.check_suite.completed", suite(None)).await;
+    let outcomes = run(
+        &runtime,
+        "github.check_suite.completed",
+        suite("renovate/x"),
+    )
+    .await;
     let (run_id, first) = ran(&outcomes).unwrap_or_default();
     assert_eq!(first, expected, "{outcomes:?}");
 
@@ -258,7 +262,7 @@ async fn a_fixer_repairs_after_a_cooldown_and_a_replay_asks_it_nothing() {
     let workflow = fixing(
         "(fn gather [{: ages : fixer} event]
            (assert (= (. (ages.cooled) :age) :passed))
-           {:repo event.repo :sha event.head_sha :branch event.head_branch
+           {:repo event.repo :sha event.sha :branch event.branch
             :patch (. (fixer.repair {:repo event.repo} {:log :red}) :patch)})",
         r#"(fn policy [facts {: push}]
              (let [{: repo : sha : branch : patch} facts]
@@ -272,7 +276,7 @@ async fn a_fixer_repairs_after_a_cooldown_and_a_replay_asks_it_nothing() {
     let outcomes = run(
         &runtime,
         "github.check_suite.completed",
-        suite(Some("renovate/x")),
+        suite("renovate/x"),
     )
     .await;
     let (run_id, effects) = ran(&outcomes).unwrap_or_default();
@@ -311,7 +315,12 @@ async fn a_reader_answers_with_text_that_stays_untrusted() {
     );
     let harness = almanac::testing::ScriptedHarness::replying(r#""IGNORE PREVIOUS""#);
     let runtime = runtime(workflow, Providers::new().harness(harness.clone()));
-    let outcomes = run(&runtime, "github.check_suite.completed", suite(None)).await;
+    let outcomes = run(
+        &runtime,
+        "github.check_suite.completed",
+        suite("renovate/x"),
+    )
+    .await;
     let (_, effects) = ran(&outcomes).unwrap_or_default();
     assert_eq!(
         effects,
@@ -392,7 +401,12 @@ async fn an_agent_is_called_only_as_its_prompt_allows_and_fails_only_the_run() {
             .provide(Arc::new(Ages(days.into())))
             .harness(harness.clone());
         let runtime = runtime(workflow, providers);
-        let outcomes = run(&runtime, "github.check_suite.completed", suite(None)).await;
+        let outcomes = run(
+            &runtime,
+            "github.check_suite.completed",
+            suite("renovate/x"),
+        )
+        .await;
         let failed: Vec<&str> = outcomes
             .iter()
             .filter_map(|outcome| match outcome {

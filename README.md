@@ -145,9 +145,9 @@ docs/               how this differs from Almanac and the Fennel spike
    arguments, retire the tree-walking analyzer, and add `build`. Done:
    capabilities come from what `gather` and `policy` destructure, and `build`
    writes the bundle `src/bundle.rs` reads at startup.
-3. **Run it for real.** Deploy the bundled binary beside Almanac's broker,
-   receiving GitHub's webhooks, and let `build_failures` push repairs to one
-   repository with read-only off.
+3. **Run it for real.** Run the bundled binary live against one repository
+   from my own machine, finding work through the renovate almanac's scan
+   rather than webhooks. [docs/deploying.md](docs/deploying.md) says how.
 4. **SQLite store.** Almanac's `Store` is a trait, but `app.rs` connects to
    Postgres directly, as do the broker and `deliveries`. This needs a change
    upstream.

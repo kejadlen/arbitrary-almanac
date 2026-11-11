@@ -17,6 +17,9 @@ pub struct Declaration {
     #[serde(deserialize_with = "effect_kinds")]
     pub may: Vec<EffectKind>,
     pub runs_per_hour: u32,
+    /// The catalog scan that finds this workflow's events beside its webhooks, if any.
+    #[serde(default)]
+    pub scan: Option<String>,
     #[serde(default)]
     pub agents: BTreeMap<String, Agent>,
 }
