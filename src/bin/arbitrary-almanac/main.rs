@@ -1,6 +1,7 @@
 use almanac::workflow::Registered;
 use arbitrary_almanac::Catalog;
-use arbitrary_almanac::host::{Registration, load_dir};
+use arbitrary_almanac::bundle::{Bundle, build};
+use arbitrary_almanac::host::Registration;
 use clap::CommandFactory as _;
 use clap::Parser as _;
 use clap_complete::Shell;
@@ -29,8 +30,19 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Verb {
+    /// Check the workflows in DIR and write a binary with them bundled to OUTPUT.
+    Build {
+        dir: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// The generic binary to bundle into, such as one built for another platform. Defaults
+        /// to this one.
+        #[arg(long)]
+        binary: Option<PathBuf>,
+    },
     /// One of Almanac's verbs, such as `synth`, `check`, `run`, or `simulate KIND FILE`, run on
-    /// the workflows in `$ARBITRARY_ALMANAC_WORKFLOWS` (default `workflows`).
+    /// the bundled workflows, or else those in `$ARBITRARY_ALMANAC_WORKFLOWS` (default
+    /// `workflows`).
     #[command(external_subcommand)]
     Almanac(
         #[expect(
@@ -70,13 +82,36 @@ fn main() -> miette::Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    let Some(Verb::Almanac(_)) = cli.verb else {
-        Cli::command().print_help().into_diagnostic()?;
-        return Ok(ExitCode::SUCCESS);
+    let catalog = Catalog::shipped();
+    let this = std::env::current_exe().into_diagnostic()?;
+    match cli.verb {
+        None => {
+            Cli::command().print_help().into_diagnostic()?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Some(Verb::Build {
+            dir,
+            output,
+            binary,
+        }) => {
+            let binary = binary.unwrap_or_else(|| this.clone());
+            let bundle = build(&catalog, &dir, &binary, &output)?;
+            let count = bundle.workflows.len();
+            println!("bundled {count} workflow(s) into {}", output.display());
+            return Ok(ExitCode::SUCCESS);
+        }
+        Some(Verb::Almanac(_)) => {}
+    }
+    // A bundled binary runs its bundle. Without one, it reads a directory.
+    let bundle = match Bundle::of_binary(&this)? {
+        Some(bundle) => bundle,
+        None => {
+            let dir = std::env::var_os("ARBITRARY_ALMANAC_WORKFLOWS")
+                .map_or_else(|| PathBuf::from("workflows"), PathBuf::from);
+            Bundle::read_dir(&dir)?
+        }
     };
-    let dir = std::env::var_os("ARBITRARY_ALMANAC_WORKFLOWS")
-        .map_or_else(|| PathBuf::from("workflows"), PathBuf::from);
-    let loaded = load_dir(&Catalog::shipped(), &dir)?;
+    let loaded = bundle.load(&catalog)?;
     if let Ok(mut slot) = LOADED.lock() {
         *slot = loaded
             .into_iter()

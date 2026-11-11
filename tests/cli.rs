@@ -97,3 +97,71 @@ fn refuses_to_run_when_a_workflow_does_not_load() {
         .failure()
         .stderr(predicate::str::contains("arbitrary_almanac::parse"));
 }
+
+#[test]
+fn builds_a_binary_that_runs_its_bundle_wherever_it_is() {
+    let dir = workflows(RED);
+    cmd()
+        .current_dir(dir.path())
+        .args(["build", "workflows", "-o", "almanac"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "bundled 1 workflow(s) into almanac",
+        ));
+    // The bundle wins over a directory, which here does not exist.
+    let elsewhere = tempfile::tempdir().unwrap();
+    let built = || Command::new(dir.path().join("almanac"));
+    built()
+        .current_dir(elsewhere.path())
+        .env("ARBITRARY_ALMANAC_WORKFLOWS", elsewhere.path().join("none"))
+        .arg("synth")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""workflow": "red""#));
+    // A bundled binary builds again, replacing its bundle.
+    fs_err::write(
+        dir.path().join("workflows/red.fnl"),
+        RED.replace(":name :red", ":name :blue"),
+    )
+    .unwrap();
+    built()
+        .current_dir(dir.path())
+        .args(["build", "workflows", "-o", "again"])
+        .assert()
+        .success();
+    Command::new(dir.path().join("again"))
+        .current_dir(elsewhere.path())
+        .arg("synth")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains(r#""workflow": "blue""#)
+                .and(predicate::str::contains(r#""workflow": "red""#).not()),
+        );
+}
+
+#[test]
+fn bundles_into_another_binary_when_asked() {
+    let dir = workflows(RED);
+    fs_err::write(dir.path().join("linux"), b"another platform's binary").unwrap();
+    cmd()
+        .current_dir(dir.path())
+        .args(["build", "workflows", "-o", "almanac", "--binary", "linux"])
+        .assert()
+        .success();
+    let built = fs_err::read(dir.path().join("almanac")).unwrap();
+    assert!(built.starts_with(b"another platform's binary"));
+}
+
+#[test]
+fn refuses_to_build_when_a_workflow_does_not_load() {
+    let dir = workflows("(oops");
+    cmd()
+        .current_dir(dir.path())
+        .args(["build", "workflows", "-o", "almanac"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("arbitrary_almanac::parse"));
+    assert!(!dir.path().join("almanac").exists());
+}

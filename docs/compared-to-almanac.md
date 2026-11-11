@@ -36,9 +36,11 @@ workflow lives and who enforces its rules:
 | Policy | A plain function, pure by signature | A fresh pure VM per call | A fresh pure VM per run, handed a constructor for each effect it destructured |
 | Events | Generated types, projected by hand per almanac | 117 lines of `github.rs` per almanac | Almanac's generated types, serialized as they are |
 
-The bundling step is planned and not built. Until it exists, the
-deployment row describes the intent, and the binary loads a directory of
-`.fnl` files at startup, which is the spike's shape.
+`build` checks every workflow and appends their sources to the binary
+with a trailer, and the binary reads them back at startup. The checks the
+spike ran at load run at build too, but a bundled workflow is loaded again
+at startup, so both see the same errors. A binary without a bundle loads a
+directory of `.fnl` files at startup, which is the spike's shape.
 
 ## Where this repository holds more tightly than Almanac
 
@@ -134,9 +136,9 @@ counts below exclude comments and blank lines:
 |---|---|
 | Almanac | 749 lines, `taint.rs` and `crates/macros` |
 | Spike | 1,931 lines of Rust and 365 of Fennel and Lua |
-| arbitrary-almanac | 2,056 lines of Rust, beside the renovate almanac it reads through |
+| arbitrary-almanac | 2,188 lines of Rust, beside the renovate almanac it reads through |
 
-This repository's tests are 1,997 lines beside that. The comparison
+This repository's tests are 2,097 lines beside that. The comparison
 favours Almanac, which puts the boundary in the type system, and it is
 the price of letting the operator never touch Rust.
 

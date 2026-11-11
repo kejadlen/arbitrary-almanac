@@ -9,6 +9,7 @@
     )
 )]
 
+pub mod bundle;
 pub mod catalog;
 mod error;
 pub mod host;
