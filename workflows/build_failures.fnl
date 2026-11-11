@@ -12,13 +12,17 @@
 (local attempt-cap 3)
 
 ;; The update has cooled and its build fails, so hold the commit, read the failed jobs' logs, and
-;; ask for a repair.
+;; ask for a repair. A repair that takes back the update would pass for the wrong reason.
 (fn repair [github run fixer repo branch pull]
-  (let [head pull.head]
+  (let [head pull.head
+        number pull.number]
     (run.hold repo head)
     (let [logs (. (github.logs repo head) :text)
-          patch (fixer.repair {: repo} {: logs "$checkout" {: repo :sha head}})]
-      {:kind :repaired : repo :number pull.number : branch : head : patch})))
+          {: patch : diff : said} (fixer.repair {: repo}
+                                                {: logs "$checkout" {: repo :sha head}})]
+      (if (. (github.undoes repo number patch) :undoes)
+          {:kind :undone : repo : number : head : diff}
+          {:kind :repaired : repo : number : branch : head : patch : diff : said}))))
 
 ;; What GitHub says now decides, since a payload is only a hint that something changed.
 (fn gather [{: github : ages : run : fixer} event]
@@ -40,9 +44,10 @@
                 :young {:kind :cooling}
                 _ {:kind :undated : repo : number :asked attempts.asked}))))))
 
-(fn stop-and-ask [{: attest : ask} repo number head question]
+;; Fails the trust check and asks a person, with `body` for them to start from.
+(fn stop-and-ask [{: attest : ask} repo number head question body]
   [(attest {:context "almanac/trust" :state :failure : repo :sha head})
-   (ask {: question :target repo :pull number :body ""})])
+   (ask {: question :target repo :pull number : body})])
 
 ;; Where a run ended up, turned into effects.
 (fn policy [facts {: attest : await : ask : push}]
@@ -60,8 +65,10 @@
       [(attest {:context "almanac/trust" :state :success : repo :sha head})]
       {:kind :exhausted :asked true} []
       {:kind :exhausted : repo : number : head}
-      (stop-and-ask effects repo number head "Repairs did not fix this build")
-      {:kind :repaired : repo : number : branch : head : patch}
+      (stop-and-ask effects repo number head "Repairs did not fix this build" "")
+      {:kind :undone : repo : number : head : diff}
+      (stop-and-ask effects repo number head "A repair took back the update" diff)
+      {:kind :repaired : repo : number : branch : head : patch : diff : said}
       (case (push {: repo
                    :pull number
                    : branch
@@ -70,9 +77,9 @@
                    :hold "almanac/trust"
                    : patch})
         (nil :empty) (stop-and-ask effects repo number head
-                                   "A repair ended with no change to push")
+                                   "A repair ended with no change to push" said)
         (nil _) (stop-and-ask effects repo number head
-                              "A repair was refused by the patch policy")
+                              "A repair was refused by the patch policy" diff)
         pushed [pushed]))))
 
 {: declare : gather : policy}

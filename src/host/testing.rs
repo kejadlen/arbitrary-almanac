@@ -90,7 +90,7 @@ pub fn catalog() -> Catalog {
         Read::cooldown("ages.cooled", Duration::from_secs(3 * 86400), published),
     ];
     catalog.prompts = vec![
-        Prompt::fixer::<Fix>("fix"),
+        Prompt::fixer::<Fix>("fix", |_| "said".to_string()),
         Prompt::quarantined::<Look>("look"),
     ];
     catalog

@@ -20,7 +20,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 [[package]]
 name = "advisory"
 version = "0.0.0"
-source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#2d3f922251541ce092e449beeb6af6415c1ddb51"
+source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#5a4b05ee84edb00ffb18a64276619c29378ca562"
 dependencies = [
  "almanac",
  "reqwest",
@@ -47,7 +47,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 [[package]]
 name = "almanac"
 version = "0.0.0"
-source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#2d3f922251541ce092e449beeb6af6415c1ddb51"
+source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#5a4b05ee84edb00ffb18a64276619c29378ca562"
 dependencies = [
  "almanac-macros",
  "axum",
@@ -70,7 +70,7 @@ dependencies = [
 [[package]]
 name = "almanac-macros"
 version = "0.0.0"
-source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#2d3f922251541ce092e449beeb6af6415c1ddb51"
+source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#5a4b05ee84edb00ffb18a64276619c29378ca562"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -80,7 +80,7 @@ dependencies = [
 [[package]]
 name = "almanac-renovate"
 version = "0.1.0"
-source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#2d3f922251541ce092e449beeb6af6415c1ddb51"
+source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#5a4b05ee84edb00ffb18a64276619c29378ca562"
 dependencies = [
  "advisory",
  "almanac",
@@ -464,7 +464,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 [[package]]
 name = "claude"
 version = "0.0.0"
-source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#2d3f922251541ce092e449beeb6af6415c1ddb51"
+source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#5a4b05ee84edb00ffb18a64276619c29378ca562"
 dependencies = [
  "almanac",
  "axum",
@@ -644,7 +644,7 @@ dependencies = [
 [[package]]
 name = "deliveries"
 version = "0.0.0"
-source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#2d3f922251541ce092e449beeb6af6415c1ddb51"
+source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#5a4b05ee84edb00ffb18a64276619c29378ca562"
 dependencies = [
  "sqlx",
 ]
@@ -993,7 +993,7 @@ checksum = "1033caf0b349c518623b5396bfb2cf0bddf44f0306d543a250e5743297aafd10"
 [[package]]
 name = "github"
 version = "0.0.0"
-source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#2d3f922251541ce092e449beeb6af6415c1ddb51"
+source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#5a4b05ee84edb00ffb18a64276619c29378ca562"
 dependencies = [
  "almanac",
  "base64 0.22.1",
@@ -2152,7 +2152,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "registry"
 version = "0.0.0"
-source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#2d3f922251541ce092e449beeb6af6415c1ddb51"
+source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#5a4b05ee84edb00ffb18a64276619c29378ca562"
 dependencies = [
  "almanac",
  "flate2",
@@ -2350,7 +2350,7 @@ dependencies = [
 [[package]]
 name = "sandbox"
 version = "0.0.0"
-source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#2d3f922251541ce092e449beeb6af6415c1ddb51"
+source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#5a4b05ee84edb00ffb18a64276619c29378ca562"
 dependencies = [
  "futures",
  "tokio",
@@ -2596,7 +2596,7 @@ checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 [[package]]
 name = "simforge"
 version = "0.0.0"
-source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#2d3f922251541ce092e449beeb6af6415c1ddb51"
+source = "git+https://github.com/ivy/almanac?branch=alpha%2Fmain#5a4b05ee84edb00ffb18a64276619c29378ca562"
 dependencies = [
  "axum",
  "base64 0.22.1",

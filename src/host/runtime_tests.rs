@@ -259,7 +259,7 @@ async fn a_fixer_repairs_after_a_cooldown_and_a_replay_asks_it_nothing() {
         "(fn gather [{: ages : fixer} event]
            (assert (= (. (ages.cooled) :age) :passed))
            {:repo event.repo :sha event.head_sha :branch event.head_branch
-            :patch (fixer.repair {:repo event.repo} {:log :red})})",
+            :patch (. (fixer.repair {:repo event.repo} {:log :red}) :patch)})",
         r#"(fn policy [facts {: push}]
              (let [{: repo : sha : branch : patch} facts]
                [(push {: repo :pull 3 : branch :message "Fix the build" :base sha : patch})]))"#,

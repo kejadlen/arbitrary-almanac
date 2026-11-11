@@ -9,11 +9,14 @@ use crate::catalog::{Prompt, Read, arguments};
 use almanac::agent::Template;
 use almanac::cooled::Published;
 use almanac::cx::{Cx, StepError};
+use almanac::patch::Patch;
 use almanac::taint::{Sha, Slug, Untrusted};
 use almanac_renovate::events::PATCH_TRAILER;
 use almanac_renovate::fleet::{Checks, TRUST_CONTEXT, checks_of, trust_pending};
 use almanac_renovate::update::{Ages, PullText, update_of};
-use almanac_renovate::workflows::build_failures::{FixerPrompt, MIN_RELEASE_AGE, ScanTarget};
+use almanac_renovate::workflows::build_failures::{
+    FixerPrompt, MIN_RELEASE_AGE, ScanTarget, closing_words, undoes_the_update,
+};
 use futures::future::BoxFuture;
 use github::client::GithubClient;
 use serde_json::{Value as Data, json};
@@ -25,6 +28,7 @@ pub fn reads() -> Vec<Read> {
     vec![
         Read::of("github.pull", pull),
         Read::of("github.logs", logs),
+        Read::of("github.undoes", undoes),
         Read::cooldown("ages.cooled", MIN_RELEASE_AGE, published),
         Read::attempts("run.attempts"),
         Read::hold("run.hold", TRUST_CONTEXT),
@@ -32,7 +36,7 @@ pub fn reads() -> Vec<Read> {
 }
 
 pub fn prompts() -> Vec<Prompt> {
-    vec![Prompt::fixer::<Fixer>("fixer")]
+    vec![Prompt::fixer::<Fixer>("fixer", closing_words)]
 }
 
 almanac::observed! {
@@ -145,6 +149,27 @@ fn logs(cx: &Cx, args: Vec<Data>) -> BoxFuture<'_, Result<Logs, StepError>> {
         Ok(Logs {
             text: Untrusted::new(text),
         })
+    })
+}
+
+almanac::observed! {
+    pub struct Undoes {
+        pub undoes: bool,
+    }
+}
+
+/// `(github.undoes repo number patch)`: whether `patch` takes back what the pull request updates.
+/// Green checks prove nothing then, because the pull request no longer updates anything.
+fn undoes(cx: &Cx, args: Vec<Data>) -> BoxFuture<'_, Result<Undoes, StepError>> {
+    Box::pin(async move {
+        let (repo, number, patch): (Slug, u64, Untrusted<Patch>) =
+            arguments("github.undoes", args)?;
+        let client = cx.get::<GithubClient>()?;
+        let updated = client.pull_added_lines(&repo.to_string(), number).await?;
+        let undoes = patch
+            .zip(&Untrusted::new(updated))
+            .narrow(|(patch, updated)| undoes_the_update(patch, updated));
+        Ok(Undoes { undoes })
     })
 }
 
