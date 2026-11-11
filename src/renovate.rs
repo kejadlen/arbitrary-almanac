@@ -5,17 +5,18 @@
 //! check suite or a pull request body means, and these reads only fetch what they need and hand
 //! the answer to a script.
 
-use crate::catalog::{Prompt, Read, arguments};
+use crate::catalog::{Event, Prompt, Read, Scan, arguments};
 use almanac::agent::Template;
 use almanac::cooled::Published;
 use almanac::cx::{Cx, StepError};
 use almanac::patch::Patch;
 use almanac::taint::{Sha, Slug, Untrusted};
-use almanac_renovate::events::PATCH_TRAILER;
+use almanac::workflow::Subject;
+use almanac_renovate::events::{BuildChanged, PATCH_TRAILER};
 use almanac_renovate::fleet::{Checks, TRUST_CONTEXT, checks_of, trust_pending};
 use almanac_renovate::update::{Ages, PullText, update_of};
 use almanac_renovate::workflows::build_failures::{
-    FixerPrompt, MIN_RELEASE_AGE, ScanTarget, closing_words, undoes_the_update,
+    BuildFailures, FixerPrompt, MIN_RELEASE_AGE, ScanTarget, closing_words, undoes_the_update,
 };
 use futures::future::BoxFuture;
 use github::client::GithubClient;
@@ -23,6 +24,22 @@ use serde_json::{Value as Data, json};
 
 /// The tail of a failed job's log that a fixer reads, where a build's error usually is.
 const LOG_LIMIT: usize = 256 * 1024;
+
+/// A build finishing, read as the renovate almanac reads it, so a check suite from a webhook and
+/// one from a scan look the same. One run per branch, since a fix for a red build lands on the
+/// branch, not the commit.
+pub fn build_changed() -> Event {
+    Event::of::<BuildChanged>(
+        |build| format!("{}:{}", build.repo, build.branch),
+        |build| vec![Subject::repo(&build.repo)],
+    )
+}
+
+/// The renovate almanac's scan for red Renovate builds: one that has cooled since it was last
+/// seen, or one whose repair passed but is still held.
+pub fn scans() -> Vec<Scan> {
+    vec![Scan::of("renovate.build-failures", BuildFailures)]
+}
 
 pub fn reads() -> Vec<Read> {
     vec![

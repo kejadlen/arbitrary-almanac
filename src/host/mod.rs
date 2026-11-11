@@ -21,7 +21,7 @@ pub use gather::{Call, Dispatch};
 pub use policy::Decision;
 pub use registered::Registration;
 
-use crate::catalog::{Event, Prompt, Read};
+use crate::catalog::{Event, Prompt, Read, Scan};
 use crate::{Catalog, Error};
 use fennel::{Fennel, Source};
 use form::Form;
@@ -43,6 +43,8 @@ pub struct Workflow {
     agents: BTreeMap<String, Prompt>,
     /// Every read in the catalog. `gather` reaches only those of the providers it was handed.
     reads: Vec<Read>,
+    /// The catalog scan the declaration names, which finds events of the kind it runs on.
+    scan: Option<Scan>,
 }
 
 impl Workflow {
@@ -60,6 +62,7 @@ impl Workflow {
                 on: declaration.on.clone(),
                 src: source.named(),
             })?;
+        let scan = scan(catalog, &declaration, &source)?;
         let agents = agents(catalog, &declaration, &source)?;
         let capabilities = capabilities::read(catalog, &declaration, &source, &forms)?;
         let lua = compile::compile(&fennel, &source, &forms)?;
@@ -76,6 +79,7 @@ impl Workflow {
                 .collect(),
             reads: catalog.reads.clone(),
             agents,
+            scan,
         })
     }
 
@@ -205,6 +209,30 @@ fn agents(
         Ok((name.clone(), prompt.clone()))
     };
     declaration.agents.iter().map(resolve).collect()
+}
+
+/// The scan the declaration names, which must find the events the workflow runs on.
+fn scan(
+    catalog: &Catalog,
+    declaration: &Declaration,
+    source: &Source,
+) -> Result<Option<Scan>, Error> {
+    let Some(name) = &declaration.scan else {
+        return Ok(None);
+    };
+    let scan = catalog.scan(name).ok_or_else(|| Error::Scan {
+        scan: name.clone(),
+        src: source.named(),
+    })?;
+    if scan.kind() != declaration.on {
+        return Err(Error::ScanKind {
+            scan: name.clone(),
+            finds: scan.kind(),
+            on: declaration.on.clone(),
+            src: source.named(),
+        });
+    }
+    Ok(Some(scan.clone()))
 }
 
 /// The value of `(local <name> value)`, if `form` is that.

@@ -34,7 +34,8 @@ workflow lives and who enforces its rules:
 | Hostile text | `Untrusted<T>`, narrowed to a closed set | A userdata and a closed `taint` table | A userdata with no methods at all |
 | Reads | `cx.observe` by convention; a raw client call compiles | A read outside `observe` is refused | The script holds no client; every call is a catalog read inside `observe` |
 | Policy | A plain function, pure by signature | A fresh pure VM per call | A fresh pure VM per run, handed a constructor for each effect it destructured |
-| Events | Generated types, projected by hand per almanac | 117 lines of `github.rs` per almanac | Almanac's generated types, serialized as they are |
+| Events | Generated types, projected by hand per almanac | 117 lines of `github.rs` per almanac | Almanac's own event types, serialized as they are |
+| Scans | A `#[scan]` function per workflow | None | A workflow names a scan the catalog ships with `:scan` |
 
 `build` checks every workflow and appends their sources to the binary
 with a trailer, and the binary reads them back at startup. The checks the
@@ -106,7 +107,14 @@ Reintroducing `narrow` here is where that cost returns.
 The catalog's reads come from Almanac's renovate almanac, which this
 binary depends on as a library rather than copying. Its providers set up
 GitHub, the registries, and the Claude harness from the environment, and
-its own functions decide what a check suite or a pull request body means:
+its own functions decide what a check suite or a pull request body means.
+A check suite reaches a workflow as the renovate almanac's `BuildChanged`,
+the event its own workflow runs on, so a scanned suite and a webhook's look
+the same. `:scan :renovate.build-failures` runs the renovate almanac's own
+scan beside the webhooks: it finds a red Renovate build that has cooled
+since it was last seen, or a repair that passed but is still held. A scan
+must find the kind of event its workflow runs on, or the workflow does not
+load. Of the reads,
 `github.pull` reads a Renovate pull request as it is now, `github.logs`
 the tail of each failed job's log, `ages.cooled` whether the update a
 pull request's text names has cooled, and `github.undoes` whether a patch
@@ -141,9 +149,9 @@ counts below exclude comments and blank lines:
 |---|---|
 | Almanac | 749 lines, `taint.rs` and `crates/macros` |
 | Spike | 1,931 lines of Rust and 365 of Fennel and Lua |
-| arbitrary-almanac | 2,213 lines of Rust, beside the renovate almanac it reads through |
+| arbitrary-almanac | 2,299 lines of Rust, beside the renovate almanac it reads through |
 
-This repository's tests are 2,156 lines beside that. The comparison
+This repository's tests are 2,254 lines beside that. The comparison
 favours Almanac, which puts the boundary in the type system, and it is
 the price of letting the operator never touch Rust.
 

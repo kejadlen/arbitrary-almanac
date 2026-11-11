@@ -61,6 +61,7 @@ fn reads_a_declaration_without_running_anything() {
             intent: "Repair a Renovate update whose build fails".into(),
             may: vec![EffectKind::Attest, EffectKind::Ask, EffectKind::Push],
             runs_per_hour: 30,
+            scan: None,
             agents: [(
                 "fixer".to_string(),
                 Agent {
@@ -337,8 +338,12 @@ fn fennel(declaration: &Declaration) -> String {
             )
         })
         .collect();
+    let scan = match &declaration.scan {
+        Some(scan) => format!(" :scan {}", quoted(scan)),
+        None => String::new(),
+    };
     format!(
-        "{{:name {} :on {} :intent {} :may [{}] :runs-per-hour {} :agents {{{}}}}}",
+        "{{:name {} :on {} :intent {} :may [{}] :runs-per-hour {}{scan} :agents {{{}}}}}",
         quoted(&declaration.name),
         quoted(&declaration.on),
         quoted(&declaration.intent),
@@ -367,14 +372,21 @@ fn declarations(tc: &TestCase) -> Declaration {
             }
         })
     };
+    // Only a check suite has a scan in the catalog.
+    let (on, scans) = tc.draw(gs::sampled_from(vec![
+        ("e", vec![None]),
+        (
+            "github.check_suite.completed",
+            vec![None, Some("renovate.build-failures")],
+        ),
+    ]));
     Declaration {
         name: tc.draw(text()),
-        on: tc
-            .draw(gs::sampled_from(vec!["e", "github.check_suite.completed"]))
-            .to_string(),
+        on: on.to_string(),
         intent: tc.draw(text()),
         may: tc.draw(gs::vecs(gs::sampled_from(kinds)).max_size(5)),
         runs_per_hour: tc.draw(gs::integers::<u32>()),
+        scan: tc.draw(gs::sampled_from(scans)).map(String::from),
         agents: tc
             .draw(gs::vecs(hegel::tuples!(text(), agent())).max_size(3))
             .into_iter()
@@ -604,6 +616,37 @@ fn a_workflow_runs_only_on_an_event_the_binary_ships() {
         err.to_string(),
         "no event in this binary is called `github.push`"
     );
+}
+
+#[test]
+fn a_workflow_scans_only_with_a_scan_the_binary_ships_for_its_event() {
+    let scanning = |on: &str, scan: &str| {
+        declaring(&format!(
+            r#"{{:name :n :on {on} :intent "i" :may [] :runs-per-hour 1 :scan {scan}}}"#
+        ))
+    };
+    let cases = [
+        (
+            ":github.check_suite.completed",
+            ":renovate.everything",
+            "arbitrary_almanac::scan",
+            "no scan in this binary is called `renovate.everything`",
+        ),
+        (
+            ":e",
+            ":renovate.build-failures",
+            "arbitrary_almanac::scan_kind",
+            "scan `renovate.build-failures` finds github.check_suite.completed events, but this workflow runs on e",
+        ),
+    ];
+    for (on, scan, expected_code, message) in cases {
+        let err = load(&scanning(on, scan)).unwrap_err();
+        assert_eq!(
+            (code(&err), err.to_string()),
+            (expected_code.to_string(), message.to_string()),
+            "{scan}"
+        );
+    }
 }
 
 #[test]

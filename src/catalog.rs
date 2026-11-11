@@ -7,7 +7,7 @@ use almanac::cx::{Cx, Halt, Record, StepError};
 use almanac::patch::Patch;
 use almanac::taint::{Observed, Sha, Slug, Untrusted};
 use almanac::wire::Malformed;
-use almanac::workflow::Subject;
+use almanac::workflow::{Found, Registered, Scanner, Subject};
 use futures::future::BoxFuture;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -22,20 +22,26 @@ pub struct Catalog {
     pub events: Vec<Event>,
     pub reads: Vec<Read>,
     pub prompts: Vec<Prompt>,
+    pub scans: Vec<Scan>,
 }
 
 impl Catalog {
     /// What this binary ships.
     pub fn shipped() -> Self {
         Self {
-            events: vec![check_suite_completed()],
+            events: vec![crate::renovate::build_changed()],
             reads: crate::renovate::reads(),
             prompts: crate::renovate::prompts(),
+            scans: crate::renovate::scans(),
         }
     }
 
     pub fn event(&self, kind: &str) -> Option<&Event> {
         self.events.iter().find(|event| event.kind == kind)
+    }
+
+    pub fn scan(&self, name: &str) -> Option<&Scan> {
+        self.scans.iter().find(|scan| scan.name == name)
     }
 
     pub fn prompt(&self, name: &str) -> Option<&Prompt> {
@@ -304,6 +310,36 @@ impl Prompt {
     }
 }
 
+/// A scan a workflow may name in `:scan`, which finds the events a webhook missed or a later
+/// look must see, such as an update that has since cooled. It is the scan of one of Almanac's
+/// Rust workflows, so what deserves a run is decided upstream.
+#[derive(Clone)]
+pub struct Scan {
+    pub name: &'static str,
+    finder: Arc<dyn Registered>,
+}
+
+impl Scan {
+    pub fn of(name: &'static str, finder: impl Registered + 'static) -> Self {
+        Self {
+            name,
+            finder: Arc::new(finder),
+        }
+    }
+
+    /// The kind of event the scan finds, which must be the kind its workflow runs on.
+    pub fn kind(&self) -> &'static str {
+        self.finder.kind()
+    }
+
+    pub fn find<'a>(
+        &'a self,
+        scanner: &'a Scanner,
+    ) -> BoxFuture<'a, Result<Vec<Found>, StepError>> {
+        self.finder.scan(scanner)
+    }
+}
+
 /// A read's arguments, as the tuple it takes.
 pub(crate) fn arguments<T: DeserializeOwned>(read: &str, args: Vec<Data>) -> Result<T, StepError> {
     serde_json::from_value(Data::from(args)).map_err(|e| StepError(format!("({read} ...) {e}")))
@@ -317,18 +353,6 @@ fn step(halt: Halt) -> StepError {
     error
 }
 
-/// One run per branch, since a fix for a red build lands on the branch, not the commit.
-fn check_suite_completed() -> Event {
-    use github::CheckSuiteCompleted;
-    Event::of::<CheckSuiteCompleted>(
-        |suite| match &suite.head_branch {
-            Some(branch) => format!("{}:{branch}", suite.repo),
-            None => format!("{}:{}", suite.repo, suite.head_sha),
-        },
-        |suite| vec![Subject::repo(&suite.repo)],
-    )
-}
-
 impl std::fmt::Debug for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.kind)
@@ -336,6 +360,12 @@ impl std::fmt::Debug for Event {
 }
 
 impl std::fmt::Debug for Prompt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name)
+    }
+}
+
+impl std::fmt::Debug for Scan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name)
     }

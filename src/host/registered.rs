@@ -230,8 +230,11 @@ impl Registered for Registration {
         })
     }
 
-    fn scan<'a>(&'a self, _: &'a Scanner) -> BoxFuture<'a, Result<Vec<Found>, StepError>> {
-        Box::pin(async { Ok(vec![]) })
+    fn scan<'a>(&'a self, scanner: &'a Scanner) -> BoxFuture<'a, Result<Vec<Found>, StepError>> {
+        match &self.workflow.scan {
+            Some(scan) => scan.find(scanner),
+            None => Box::pin(async { Ok(vec![]) }),
+        }
     }
 
     fn manifest(&self) -> Data {
@@ -239,7 +242,7 @@ impl Registered for Registration {
             "workflow": self.name(),
             "intent": self.intent(),
             "on": self.kind(),
-            "scans": false,
+            "scans": self.workflow.scan.is_some(),
             "runs_per_hour": self.runs_per_hour(),
             "may": self.may(),
             "agents": self.agent_names(),

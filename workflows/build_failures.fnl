@@ -6,6 +6,7 @@
    :intent "Repair a Renovate pull request whose build failed, after its cooldown."
    :may [:attest :await :ask :push]
    :runs-per-hour 20
+   :scan :renovate.build-failures
    :agents {:fixer {:prompt :fixer :vars [:repo]}}})
 
 ;; Repairs tried on one pull request before a person is asked.
@@ -27,8 +28,8 @@
 ;; What GitHub says now decides, since a payload is only a hint that something changed.
 (fn gather [{: github : ages : run : fixer} event]
   (let [repo event.repo
-        branch event.head_branch
-        pull (if branch (github.pull repo branch) {:found false})]
+        branch event.branch
+        pull (github.pull repo branch)]
     (if (or (not pull.found) pull.conflicted pull.running)
         {:kind :nothing}
         (not pull.failed)
